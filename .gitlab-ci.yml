@@ -20,10 +20,11 @@ stages:
 
 default:
   image: python:3.11-slim
-  # pandapower/scipy need a C toolchain + BLAS for some wheels.
+  # Lightweight by default: numpy/scipy/pandas/pandapower/matplotlib all ship
+  # manylinux wheels for cp311, so no compiler/BLAS is needed for install. The
+  # heavy stages add build tooling themselves only if a source build is required.
   before_script:
     - python -V
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libatlas-base-dev >/dev/null
     - python -m pip install --upgrade pip -q
 
 cache:
@@ -71,6 +72,11 @@ system:
   when: manual
   allow_failure: false
   timeout: 45m
+  before_script:
+    - python -V
+    # runtime libs some wheels dlopen (OpenMP for numba/scipy); build tools as fallback
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
     - python -m pytest -m slow -v --junitxml=report-system.xml
@@ -90,6 +96,10 @@ midas_smoke:
   when: manual
   allow_failure: true
   timeout: 45m
+  before_script:
+    - python -V
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
     # Prepare the MIDAS artefacts + NOAA weather CSV, then run a short scenario.
@@ -110,6 +120,10 @@ five_day_simulation:
   when: manual
   allow_failure: false
   timeout: 90m
+  before_script:
+    - python -V
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
     - python analysis/run_5day.py --max-steps 120 --outdir analysis
