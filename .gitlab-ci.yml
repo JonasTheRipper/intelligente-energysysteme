@@ -55,7 +55,14 @@ unit:
   script:
     # Only the light deps are needed for the unit/smoke marker set.
     - pip install -q numpy==1.26.4 pandas==2.1.4 "scipy>=1.11,<2" "networkx>=3.0" pytest
-    - python -m pytest -m unit -v --junitxml=report-unit.xml
+    # The slow test modules import pandapower / palaestrai at module level, which
+    # are NOT installed in this lightweight stage. Ignore those files during
+    # collection so only the true unit/smoke tests are gathered and run.
+    - >
+      python -m pytest -m unit -v --junitxml=report-unit.xml
+      --ignore=tests/test_damage_mapper.py
+      --ignore=tests/test_midas_steps.py
+      --ignore=tests/test_palaestrai_env.py
   artifacts:
     when: always
     reports:
