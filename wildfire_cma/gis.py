@@ -114,6 +114,101 @@ def synthetic_socal(
     return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds)
 
 
+# Default location of the cached real SRTM GL3 mosaic produced by
+# ``data/dem/fetch_dem_tiles.py`` (OpenTopography). Stored as a compact .npz so
+# the repo and CI need no rasterio/GDAL to read it -- just numpy.
+import os as _os  # noqa: E402
+_DEM_NPZ = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)),
+                         "data", "dem", "socal_srtm_gl3.npz")
+
+
+def _resample_nearest(arr: np.ndarray, out_shape: Tuple[int, int]) -> np.ndarray:
+    """Pure-numpy nearest-neighbour resample (no scipy dependency)."""
+    out_r, out_c = out_shape
+    in_r, in_c = arr.shape
+    ri = (np.linspace(0, in_r - 1, out_r)).round().astype(int)
+    ci = (np.linspace(0, in_c - 1, out_c)).round().astype(int)
+    return arr[np.ix_(ri, ci)]
+
+
+def _resample_bilinear(arr: np.ndarray, out_shape: Tuple[int, int]) -> np.ndarray:
+    """Pure-numpy bilinear resample for the continuous DEM."""
+    out_r, out_c = out_shape
+    in_r, in_c = arr.shape
+    ys = np.linspace(0, in_r - 1, out_r)
+    xs = np.linspace(0, in_c - 1, out_c)
+    y0 = np.floor(ys).astype(int)
+    x0 = np.floor(xs).astype(int)
+    y1 = np.minimum(y0 + 1, in_r - 1)
+    x1 = np.minimum(x0 + 1, in_c - 1)
+    wy = (ys - y0)[:, None]
+    wx = (xs - x0)[None, :]
+    a = arr[np.ix_(y0, x0)]
+    b = arr[np.ix_(y0, x1)]
+    c = arr[np.ix_(y1, x0)]
+    d = arr[np.ix_(y1, x1)]
+    top = a * (1 - wx) + b * wx
+    bot = c * (1 - wx) + d * wx
+    return top * (1 - wy) + bot * wy
+
+
+def _fuel_from_dem(dem: np.ndarray, seed: int = 7) -> np.ndarray:
+    """Derive coarse fuel classes from a real DEM (elevation-banded).
+
+    Real LANDFIRE fuel is not bundled, so we approximate the SoCal fuel
+    structure from elevation: ocean/water (<=0 m) and the highest alpine zone
+    are non-burnable; grassland valleys, a broad chaparral foothill belt, and
+    montane timber follow the classic Southern California vegetation gradient.
+    Deterministic by ``seed`` for reproducibility.
+    """
+    rng = np.random.default_rng(seed)
+    fuel = np.full(dem.shape, 3, dtype=np.int16)   # default chaparral
+    fuel[dem < 150] = 1                              # valleys -> grass
+    fuel[(dem >= 150) & (dem < 400)] = 2             # foothill grass-shrub
+    fuel[(dem >= 400) & (dem < 1200)] = 3            # chaparral belt
+    fuel[(dem >= 1200) & (dem < 1800)] = 4           # montane timber-understory
+    fuel[(dem >= 1800) & (dem < 2800)] = 5           # high timber-litter
+    fuel[dem >= 2800] = 0          # alpine / rock above treeline -> non-burnable
+    fuel[dem <= 0] = 0             # ocean / Salton Trough water -> non-burnable
+    # light scatter of urban / agricultural non-burnable cells in low valleys
+    low = dem < 250
+    urban = (rng.random(dem.shape) < 0.03) & low
+    fuel[urban] = 0
+    return fuel
+
+
+def socal_from_srtm(
+    nrows: int = 600,
+    ncols: int = 760,
+    bounds: Tuple[float, float, float, float] = SOCAL_BOUNDS,
+    dem_npz: Optional[str] = None,
+    seed: int = 7,
+) -> RasterStack:
+    """Build a RasterStack from the cached **real** SRTM GL3 DEM mosaic.
+
+    Reads the numpy ``.npz`` produced by ``data/dem/fetch_dem_tiles.py``
+    (OpenTopography SRTM GL3, origin upper / north-at-top), resamples it onto
+    the model's ``nrows x ncols`` grid, and derives fuel classes from the real
+    elevation. No rasterio/GDAL required -- works in the sandbox and in CI.
+
+    Raises ``FileNotFoundError`` if the DEM cache is missing so callers can
+    fall back to :func:`synthetic_socal`.
+    """
+    path = dem_npz or _DEM_NPZ
+    if not _os.path.exists(path):
+        raise FileNotFoundError(
+            f"Real DEM cache not found at {path}; run data/dem/fetch_dem_tiles.py"
+        )
+    dem_full = np.load(path)["dem"].astype(float)   # (rows, cols), north at top
+    dem = _resample_bilinear(dem_full, (nrows, ncols))
+    fuel = _fuel_from_dem(dem, seed=seed)
+    delta = _approx_cell_size_m(bounds, nrows, ncols)
+    LOG.info("Real SRTM SoCal raster %dx%d from %s (~%.0f m cells, "
+             "elev %.0f..%.0f m)", nrows, ncols, _os.path.basename(path),
+             delta, float(dem.min()), float(dem.max()))
+    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds)
+
+
 def from_rasters(
     fuel_path: str,
     dem_path: str,

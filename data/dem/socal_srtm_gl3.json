@@ -1,0 +1,18 @@
+{
+  "bounds": [
+    -121.3,
+    32.4,
+    -113.7,
+    37.7
+  ],
+  "demtype": "SRTMGL3",
+  "cellsize_deg": 0.000833333333,
+  "shape": [
+    6360,
+    9120
+  ],
+  "origin": "upper",
+  "source": "OpenTopography SRTM GL3 (90m)",
+  "nx_tiles": 4,
+  "ny_tiles": 3
+}

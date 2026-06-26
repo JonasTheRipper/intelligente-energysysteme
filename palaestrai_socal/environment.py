@@ -71,7 +71,9 @@ from wildfire_cma.cma import (  # noqa: E402
     WildfireCMA,
 )
 from wildfire_cma.damage import DamageMapper  # noqa: E402
-from wildfire_cma.gis import SOCAL_BOUNDS, synthetic_socal  # noqa: E402
+from wildfire_cma.gis import (  # noqa: E402
+    SOCAL_BOUNDS, synthetic_socal, socal_from_srtm,
+)
 
 # Reuse the proven SoCal dispatch / convergence recipe ("config D").
 sys.path.insert(0, os.path.join(_ROOT, "socal_grid"))
@@ -136,6 +138,9 @@ class SoCalWildfireEnvironment(Environment):
         self.t_burn_steps = int(p.get("t_burn_steps", 6))
         self.max_steps = int(p.get("max_steps", 120))
         self.seed = int(p.get("seed", 0))
+        # use the real SRTM GL3 DEM mosaic if cached (data/dem/*.npz); falls
+        # back to the deterministic synthetic terrain when unavailable.
+        self.use_real_dem = bool(p.get("use_real_dem", True))
 
         # default ignition: dense LA-basin cluster (Eaton-fire-like origin)
         self.default_ignition = tuple(
@@ -153,6 +158,24 @@ class SoCalWildfireEnvironment(Environment):
         self._cum_customer_minutes = 0.0
         self._total_customers = 0.0
         self._peak_load_mw = 0.0
+
+    # -- terrain ------------------------------------------------------------
+    def _build_raster(self):
+        """Build the fuel+DEM raster: real SRTM GL3 if cached, else synthetic."""
+        if self.use_real_dem:
+            try:
+                r = socal_from_srtm(
+                    nrows=self.raster_nrows, ncols=self.raster_ncols,
+                    bounds=SOCAL_BOUNDS, seed=self.seed or 7,
+                )
+                LOG.info("Using REAL SRTM GL3 terrain (elev %.0f..%.0f m)",
+                         float(r.dem.min()), float(r.dem.max()))
+                return r
+            except FileNotFoundError as exc:
+                LOG.warning("Real DEM unavailable (%s); using synthetic", exc)
+        return synthetic_socal(
+            nrows=self.raster_nrows, ncols=self.raster_ncols, seed=self.seed or 7
+        )
 
     # -- weather ------------------------------------------------------------
     def _load_weather(self):
@@ -262,9 +285,7 @@ class SoCalWildfireEnvironment(Environment):
             if len(self._net.res_load) else 0.0
         )
 
-        self._raster = synthetic_socal(
-            nrows=self.raster_nrows, ncols=self.raster_ncols, seed=self.seed or 7
-        )
+        self._raster = self._build_raster()
         self._weather = self._load_weather()
         self._step = 0
         self._cum_customer_minutes = 0.0

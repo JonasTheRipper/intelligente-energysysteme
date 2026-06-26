@@ -39,10 +39,12 @@ palaestrai_socal/    palaestrAI environment + experiment run file
   experiment.yml         arsenAI/palaestrAI experiment run (phase_0_santa_ana_5day)
 wildfire_cma/        GUARDIAN wildfire cellular automaton + damage mapper + PostGIS
   cma.py                 WildfireCMA (S, τ, D, Θ); ROS eq-6, spread eq-7
-  gis.py                 SoCal raster (synthetic or LANDFIRE/3DEP), bounds, fuel map
+  gis.py                 SoCal raster: real SRTM DEM (OpenTopography) or synthetic fallback, bounds, fuel map
   damage.py              DamageMapper: bus/line → cell co-registration, asset removal
   postgis.py, postgis_load.py   PostGIS staging (raster, grid, fire perimeter)
 data/                CAISO actuals, GeoJSON layers, PostGIS init SQL
+  dem/                   real SRTM GL3 terrain: fetch_dem_tiles.py + socal_srtm_gl3.json
+                         (the 71 MB socal_srtm_gl3.npz mosaic is git-ignored — regenerate it)
 analysis/            5-day simulation driver + outputs (run_5day.py, *.png, report)
 tests/               unit (cma, postgis, smoke) + slow system tests
 docs/                MIDAS_INTEGRATION.md
@@ -69,7 +71,39 @@ pytest -m slow
 # 4) the headline result: 5-day wildfire / grid co-simulation
 python analysis/run_5day.py --max-steps 120 --outdir analysis
 #   -> analysis/FIVE_DAY_ANALYSIS.md + four PNG figures + five_day_kpis.csv
+
+# 5) (optional) animated timelapse: GIS fire spread + failed lines + SAIDI curve
+python analysis/make_timelapse.py    # -> analysis/wildfire_timelapse.gif + .mp4
 ```
+
+---
+
+## Real terrain (SRTM GL3 via OpenTopography)
+
+The environment runs on the **real Southern California elevation surface** so the
+fire spread can be judged against actual topography (Transverse Ranges, Channel
+Islands, Salton Trough, Mojave). Terrain is SRTM GL3 (~90 m) pulled from the
+[OpenTopography Global DEM API](https://portal.opentopography.org/apidocs/).
+
+The 71 MB mosaic (`data/dem/socal_srtm_gl3.npz`) is **not committed** — it is
+regenerated from the API. The full SoCal footprint is too large for a single
+proxied request, so `fetch_dem_tiles.py` tiles the bounding box into a 4×3 grid,
+requests each tile as an Arc/Info ASCII grid, parses it with pure numpy (no
+rasterio/GDAL), and stitches the tiles into one north-at-top mosaic:
+
+```bash
+# requires an OpenTopography API key (free): https://portal.opentopography.org/myopentopo
+export OPENTOPOGRAPHY_API_KEY=...
+python data/dem/fetch_dem_tiles.py        # -> data/dem/socal_srtm_gl3.npz (~71 MB) + .json
+```
+
+`wildfire_cma.gis.socal_from_srtm()` loads that cache, bilinearly resamples it
+onto the 600×760 model grid, and derives coarse fuel classes from elevation
+(`_fuel_from_dem`: ocean & alpine non-burnable; the SoCal grass → chaparral →
+montane-timber gradient in between). **If the cache is absent the environment
+falls back to `synthetic_socal()` automatically** (`use_real_dem` defaults to
+`True` in `SoCalWildfireEnvironment` but degrades gracefully), so the simulation
+and the fast CI tests run with or without the DEM binary present.
 
 ---
 
@@ -240,7 +274,7 @@ behind manual triggers:
 | Stage | Trigger | What it does |
 |-------|---------|--------------|
 | `lint` | push | flake8 (hard-fail on syntax/undefined; style advisory) |
-| `unit` | push | `pytest -m unit` (cma, postgis, smoke — no grid, < 5 s) |
+| `unit` | push | `pytest -m unit` (cma, postgis, gis, smoke — numpy only, no grid, < 5 s) |
 | `system` | **manual** | `pytest -m slow` (grid dispatch + power flow + palaestrAI env) |
 | `simulate` | **manual** | NOAA MIDAS smoke run + the full 5-day co-simulation, published as artifacts |
 
