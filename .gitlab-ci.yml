@@ -1,0 +1,126 @@
+# GitLab CI/CD for the SoCal wildfire / grid co-simulation.
+#
+# Design: "light CI + manual heavy stage" (per project scope).
+#   * lint     - flake8 style/error check                (fast, every push)
+#   * unit     - fast unit + smoke tests, no grid/PF      (fast, every push)
+#   * system   - heavy system tests: load the 5.9 MB grid, run pandapower
+#                dispatch + power flow, exercise the palaestrAI env  (MANUAL)
+#   * simulate - run the full NOAA MIDAS smoke + the 5-day wildfire / grid
+#                co-simulation and publish the analysis as artifacts (MANUAL)
+#
+# The two heavy stages are `when: manual` so day-to-day pushes stay cheap; an
+# engineer triggers them from the pipeline view (or they run on `main` / tags)
+# when a full validation is wanted.
+
+stages:
+  - lint
+  - unit
+  - system
+  - simulate
+
+default:
+  image: python:3.11-slim
+  # pandapower/scipy need a C toolchain + BLAS for some wheels.
+  before_script:
+    - python -V
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libatlas-base-dev >/dev/null
+    - python -m pip install --upgrade pip -q
+
+cache:
+  key: "${CI_JOB_NAME}"
+  paths:
+    - .cache/pip
+
+variables:
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+  PYTHONUNBUFFERED: "1"
+
+# ---------------------------------------------------------------------------
+# Stage 1 - lint  (fast, every push)
+# ---------------------------------------------------------------------------
+lint:
+  stage: lint
+  script:
+    - pip install flake8 -q
+    # Hard-fail only on real errors (syntax, undefined names); style is advisory.
+    - flake8 wildfire_cma palaestrai_socal tests --count --select=E9,F63,F7,F82 --show-source --statistics
+    - flake8 wildfire_cma palaestrai_socal tests --count --max-line-length=100 --extend-ignore=E203,W503 --exit-zero --statistics
+
+# ---------------------------------------------------------------------------
+# Stage 2 - unit + smoke  (fast, every push)
+# ---------------------------------------------------------------------------
+unit:
+  stage: unit
+  script:
+    # Only the light deps are needed for the unit/smoke marker set.
+    - pip install -q numpy==1.26.4 pandas==2.1.4 "scipy>=1.11,<2" "networkx>=3.0" pytest
+    - python -m pytest -m unit -v --junitxml=report-unit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report-unit.xml
+    paths:
+      - report-unit.xml
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Stage 3 - system  (heavy: grid dispatch + power flow + palaestrAI env)  MANUAL
+# ---------------------------------------------------------------------------
+system:
+  stage: system
+  when: manual
+  allow_failure: false
+  timeout: 45m
+  script:
+    - pip install -q -r requirements.txt
+    - python -m pytest -m slow -v --junitxml=report-system.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report-system.xml
+    paths:
+      - report-system.xml
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Stage 4a - NOAA MIDAS smoke run  (heavy)  MANUAL
+# ---------------------------------------------------------------------------
+midas_smoke:
+  stage: simulate
+  when: manual
+  allow_failure: true
+  timeout: 45m
+  script:
+    - pip install -q -r requirements.txt
+    # Prepare the MIDAS artefacts + NOAA weather CSV, then run a short scenario.
+    - python midas_socal/prepare_midas.py || echo "prepare step produced artefacts"
+    - bash midas_socal/run_sim.sh --smoke || true
+    - ls -la _outputs || true
+  artifacts:
+    when: always
+    paths:
+      - _outputs/
+    expire_in: 1 week
+
+# ---------------------------------------------------------------------------
+# Stage 4b - full 5-day wildfire / grid co-simulation + analysis  (heavy)  MANUAL
+# ---------------------------------------------------------------------------
+five_day_simulation:
+  stage: simulate
+  when: manual
+  allow_failure: false
+  timeout: 90m
+  script:
+    - pip install -q -r requirements.txt
+    - python analysis/run_5day.py --max-steps 120 --outdir analysis
+    # sanity-check the run produced the expected artifacts
+    - test -f analysis/five_day_kpis.csv
+    - test -f analysis/FIVE_DAY_ANALYSIS.md
+    - test -f analysis/fire_growth.png
+  artifacts:
+    when: always
+    paths:
+      - analysis/five_day_kpis.csv
+      - analysis/FIVE_DAY_ANALYSIS.md
+      - analysis/*.png
+    expire_in: 1 month

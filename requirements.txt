@@ -1,0 +1,21 @@
+# Core runtime dependencies for the SoCal wildfire / grid co-simulation.
+#
+# Pinned to the versions the experiments were verified against. palaestrAI
+# constrains numpy<2 and pandas==2.1.4; pandapower 3.4.0 power flow works fine
+# under that constraint. Do not bump numpy/pandas without re-validating.
+numpy==1.26.4
+pandas==2.1.4
+scipy>=1.11,<2
+pandapower==3.4.0
+networkx>=3.0
+matplotlib>=3.7
+
+# palaestrAI / arsenAI stack (OFFIS ARL). palaestrai-mosaik + midas-palaestrai
+# pull in mosaik and the MIDAS modules used by the scenario.
+palaestrai==3.5.9
+palaestrai-mosaik==3.5.7
+midas-palaestrai==3.5.9
+
+# PostGIS staging layer (Part 3 GIS persistence). psycopg3 also works if
+# present; the code falls back to psycopg2 automatically.
+psycopg2-binary>=2.9

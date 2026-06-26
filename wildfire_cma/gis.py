@@ -1,0 +1,184 @@
+"""California GIS ingest for the wildfire CMA.
+
+Builds the co-registered :class:`~wildfire_cma.cma.RasterStack` (fuel + DEM)
+over the Southern California footprint and provides helpers to load real GIS
+layers when available:
+
+* **LANDFIRE FBFM40** 40-class fuel model (30 m) -> coarse fuel-class ids.
+* **USGS 3DEP** DEM (~10-30 m) -> elevation array.
+* **NLCD** land cover (30 m) -> non-burnable mask (water / developed / barren).
+
+Real layers are read with ``rasterio`` (GDAL) when a path is given; otherwise a
+deterministic **synthetic** California-like raster is generated so the pipeline
+and tests run offline. Layers can also be staged in / out of a PostGIS database
+(see :mod:`wildfire_cma.postgis` and ``docker-compose.yml``).
+
+LANDFIRE FBFM40 -> coarse class mapping (see ``cma.BASE_ROS_BY_FUEL``):
+    GR (101-109)        -> 1  grass
+    GS (121-124)        -> 2  grass-shrub
+    SH (141-149)        -> 3  shrub / chaparral
+    TU (161-165)        -> 4  timber-understory
+    TL (181-189)        -> 5  timber-litter
+    SB (201-204)        -> 6  slash-blowdown
+    NB (91-99: urban/water/barren/snow/agriculture) -> 0 non-burnable
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional, Tuple
+
+import numpy as np
+
+from .cma import RasterStack
+
+LOG = logging.getLogger("wildfire_cma.gis")
+
+# Full Southern California grid footprint (SCE + LADWP + SDG&E service area
+# plus the AZ/NV intertie buses that import into the region). Derived from the
+# actual extent of the 2,294-bus SoCal pandapower model (bus lon/lat min/max
+# with a small margin) so the wildfire raster co-registers with *every* bus and
+# line, not just the coastal-metro core.
+#   model lon: -121.115 .. -113.915   lat: 32.516 .. 37.546
+# (minlon, minlat, maxlon, maxlat)
+SOCAL_BOUNDS = (-121.3, 32.4, -113.7, 37.7)
+
+
+def fbfm40_to_class(fbfm: np.ndarray) -> np.ndarray:
+    """Map LANDFIRE FBFM40 codes to coarse fuel-class ids used by the CMA."""
+    out = np.zeros_like(fbfm, dtype=np.int16)
+    out[(fbfm >= 101) & (fbfm <= 109)] = 1   # GR
+    out[(fbfm >= 121) & (fbfm <= 124)] = 2   # GS
+    out[(fbfm >= 141) & (fbfm <= 149)] = 3   # SH (chaparral)
+    out[(fbfm >= 161) & (fbfm <= 165)] = 4   # TU
+    out[(fbfm >= 181) & (fbfm <= 189)] = 5   # TL
+    out[(fbfm >= 201) & (fbfm <= 204)] = 6   # SB
+    # everything else (incl. 91-99 NB) stays 0 = non-burnable
+    return out
+
+
+def _approx_cell_size_m(bounds, nrows, ncols) -> float:
+    """Approximate cell size in metres at the centre latitude."""
+    minlon, minlat, maxlon, maxlat = bounds
+    mid_lat = (minlat + maxlat) / 2.0
+    m_per_deg_lat = 111_320.0
+    m_per_deg_lon = 111_320.0 * np.cos(np.radians(mid_lat))
+    dy = (maxlat - minlat) * m_per_deg_lat / nrows
+    dx = (maxlon - minlon) * m_per_deg_lon / ncols
+    return float((dx + dy) / 2.0)
+
+
+def synthetic_socal(
+    nrows: int = 200,
+    ncols: int = 260,
+    bounds: Tuple[float, float, float, float] = SOCAL_BOUNDS,
+    seed: int = 7,
+) -> RasterStack:
+    """Generate a deterministic California-like raster (offline fallback).
+
+    Produces a fuel map dominated by chaparral in the foothills, grass in the
+    valleys, timber at elevation, and non-burnable urban/ocean cells, plus a
+    DEM with coastal plain rising to inland mountains. Reproducible by seed.
+    """
+    rng = np.random.default_rng(seed)
+    minlon, minlat, maxlon, maxlat = bounds
+
+    # --- DEM: rise from the SW coast toward NE mountains + noise -----------
+    yy, xx = np.mgrid[0:nrows, 0:ncols]
+    coast = (xx / ncols) * 0.7 + (1 - yy / nrows) * 0.3   # high to the E/N
+    ridges = 0.15 * np.sin(xx / 12.0) * np.cos(yy / 15.0)
+    dem = (coast + ridges) * 2200.0
+    dem += rng.normal(0, 40, (nrows, ncols))
+    dem = np.clip(dem, 0, None)
+
+    # --- fuel: elevation-banded with patchiness ----------------------------
+    fuel = np.full((nrows, ncols), 3, dtype=np.int16)  # default chaparral
+    fuel[dem < 150] = 1            # low valleys -> grass
+    fuel[(dem >= 150) & (dem < 400)] = 2   # foothill grass-shrub
+    fuel[(dem >= 400) & (dem < 1200)] = 3  # chaparral belt
+    fuel[dem >= 1200] = 4          # montane timber-understory
+    fuel[dem >= 1800] = 5          # high timber-litter
+    # ocean to the SW corner -> non-burnable
+    ocean = (xx / ncols + yy / nrows) < 0.18
+    fuel[ocean] = 0
+    # scattered urban patches -> non-burnable
+    urban = rng.random((nrows, ncols)) < 0.04
+    fuel[urban] = 0
+    # random fuel-break roads
+    for _ in range(6):
+        r = rng.integers(0, nrows)
+        fuel[r, :] = np.where(rng.random(ncols) < 0.6, 0, fuel[r, :])
+
+    delta = _approx_cell_size_m(bounds, nrows, ncols)
+    LOG.info("Synthetic SoCal raster %dx%d, ~%.0f m cells", nrows, ncols, delta)
+    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds)
+
+
+def from_rasters(
+    fuel_path: str,
+    dem_path: str,
+    bounds: Optional[Tuple[float, float, float, float]] = None,
+    nlcd_path: Optional[str] = None,
+    target_shape: Optional[Tuple[int, int]] = None,
+) -> RasterStack:
+    """Build a RasterStack from real LANDFIRE/3DEP GeoTIFFs via rasterio.
+
+    Reprojects/resamples both layers onto a common grid clipped to ``bounds``
+    (defaults to the SoCal footprint). Requires ``rasterio``.
+    """
+    import rasterio
+    from rasterio.warp import Resampling, calculate_default_transform, reproject
+    from rasterio.windows import from_bounds as window_from_bounds
+
+    bounds = bounds or SOCAL_BOUNDS
+
+    def _read(path):
+        with rasterio.open(path) as src:
+            arr = src.read(1)
+            return arr, src.transform, src.crs, src.bounds
+
+    fuel_raw, ftrans, fcrs, _ = _read(fuel_path)
+    dem_raw, _, _, _ = _read(dem_path)
+
+    # naive common grid: resample DEM to fuel shape (assumes overlapping AOI)
+    if dem_raw.shape != fuel_raw.shape:
+        from scipy.ndimage import zoom
+        zy = fuel_raw.shape[0] / dem_raw.shape[0]
+        zx = fuel_raw.shape[1] / dem_raw.shape[1]
+        dem_raw = zoom(dem_raw, (zy, zx), order=1)
+
+    fuel = fbfm40_to_class(fuel_raw)
+    if nlcd_path:
+        nlcd, _, _, _ = _read(nlcd_path)
+        if nlcd.shape == fuel.shape:
+            # NLCD: 11=water, 21-24=developed, 31=barren -> non-burnable
+            nb = np.isin(nlcd, [11, 12, 21, 22, 23, 24, 31])
+            fuel[nb] = 0
+
+    if target_shape and target_shape != fuel.shape:
+        from scipy.ndimage import zoom
+        zy = target_shape[0] / fuel.shape[0]
+        zx = target_shape[1] / fuel.shape[1]
+        fuel = zoom(fuel, (zy, zx), order=0).astype(np.int16)
+        dem_raw = zoom(dem_raw, (zy, zx), order=1)
+
+    delta = _approx_cell_size_m(bounds, *fuel.shape)
+    return RasterStack(fuel=fuel.astype(np.int16), dem=np.asarray(dem_raw, float),
+                       delta_m=delta, bounds=bounds)
+
+
+def build_socal_raster(
+    fuel_path: Optional[str] = None,
+    dem_path: Optional[str] = None,
+    nrows: int = 200,
+    ncols: int = 260,
+    bounds: Tuple[float, float, float, float] = SOCAL_BOUNDS,
+) -> RasterStack:
+    """Convenience: real rasters if both paths given, else synthetic SoCal."""
+    if fuel_path and dem_path:
+        try:
+            return from_rasters(fuel_path, dem_path, bounds,
+                                target_shape=(nrows, ncols))
+        except Exception as exc:  # pragma: no cover - env dependent
+            LOG.warning("Real raster ingest failed (%s); using synthetic", exc)
+    return synthetic_socal(nrows, ncols, bounds)

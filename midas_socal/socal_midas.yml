@@ -1,0 +1,77 @@
+#######################################################################
+# MIDAS scenario: Southern California grid co-simulation
+#
+# Drives the geo-referenced SoCal pandapower model (2,294 buses, 35 GW
+# peak) with REAL CAISO actuals for 2024-07-16:
+#   - load buses follow the CAISO system-demand shape (scaled to each
+#     bus's population-weighted peak MW)
+#   - solar / wind / battery sgens follow the CAISO fuel-mix shapes
+#
+# Weather is sourced from NOAA (NCEI ISD / HRRR) for Southern California,
+# replacing the bundled DWD Bremen data. The NOAA CSV is produced by
+# midas_socal/weather/noaa_provider.py (run via prepare_midas.py) in the exact
+# schema the MIDAS weather simulator expects, so NOAA is wired in *inside the
+# scenario* rather than as a separate simulator.
+#
+# 96 steps of 15 min  ->  one full day.
+#######################################################################
+socal_midas:
+  parent:
+  modules: [store, timesim, powergrid, weather, powerseries]
+  start_date: 2024-07-16 00:00:00-0700
+  end: 1*24*60*60
+  step_size: 15*60
+
+  store_params:
+    filename: socal_midas.csv
+
+  timesim_params:
+    socal:
+      start_date: 2024-07-16 00:00:00-0700
+
+  powergrid_params:
+    socal:
+      gridfile: /home/user/.config/midas/midas_data/socal_grid_midas.json
+
+  # NOAA weather (NCEI ISD by default). The MIDAS `weather` simulator reads the
+  # NOAA-derived CSV produced by prepare_midas.py from the MIDAS data dir.
+  weather_params:
+    socal_noaa:
+      # data_path omitted on purpose: the MIDAS weather simulator does NOT expand
+      # a leading '~', so we let it fall back to RuntimeConfig().paths['data_path']
+      # (the MIDAS data dir), where prepare_midas.py writes socal_noaa_weather.csv.
+      filename: socal_noaa_weather.csv
+      weather_mapping:
+        WeatherCurrent:
+          - interpolate: true
+            randomize: false
+
+  # Two powerseries instances (two scopes under one module).
+  # Each mapping entry is a COMBINED [[p_col, q_col], scale] pair, which the
+  # powerseries module turns into a CombinedTimeSeries that reads BOTH active
+  # (p_mw) and reactive (q_mvar) power directly from the CSV -- this is how the
+  # local generators get their reactive support and the loads get an exact
+  # cos-phi instead of a calculated one.
+  powerseries_params:
+    # --- generation: renewables (capped) + local generators (p AND q) ---
+    sgens:
+      grid_name: socal
+      use_custom_time_series: false
+      calculate_missing_power: false
+      is_load: false
+      is_sgen: true
+      filename: socal_sgen_ts.csv
+      data_step_size: 900
+      combined_mapping_filename: sgen_mapping.json
+      prefer_combined_mapping_from_file: true
+    # --- demand: every load bus driven by the CAISO system-demand shape ---
+    loads:
+      grid_name: socal
+      use_custom_time_series: false
+      calculate_missing_power: false
+      is_load: true
+      is_sgen: false
+      filename: socal_load_ts.csv
+      data_step_size: 900
+      combined_mapping_filename: load_mapping.json
+      prefer_combined_mapping_from_file: true

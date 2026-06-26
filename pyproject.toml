@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "socal-wildfires"
+version = "0.1.0"
+description = "SoCal grid + GUARDIAN wildfire CMA co-simulation (MIDAS / palaestrAI)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Eric MSP Veith" }]
+keywords = ["wildfire", "power-grid", "palaestrai", "midas", "cellular-automaton", "guardian"]
+
+dependencies = [
+    "numpy==1.26.4",
+    "pandas==2.1.4",
+    "scipy>=1.11,<2",
+    "pandapower==3.4.0",
+    "networkx>=3.0",
+    "matplotlib>=3.7",
+    "psycopg2-binary>=2.9",
+]
+
+[project.optional-dependencies]
+palaestrai = [
+    "palaestrai==3.5.9",
+    "palaestrai-mosaik==3.5.7",
+    "midas-palaestrai==3.5.9",
+]
+dev = [
+    "pytest>=7.4",
+    "flake8>=6.0",
+]
+gis = [
+    "geopandas>=1.0",
+    "folium>=0.15",
+    "gridstatus>=0.25",
+    # "rasterio>=1.3",  # real LANDFIRE/3DEP rasters
+]
+
+[tool.setuptools]
+packages = ["wildfire_cma", "palaestrai_socal"]
+
+[tool.pytest.ini_options]
+markers = [
+    "unit: fast unit tests (no grid load, no power flow)",
+    "slow: heavy system tests (grid dispatch + power flow)",
+]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = ["E203", "W503"]
+exclude = [".git", "__pycache__", "data", "_outputs"]

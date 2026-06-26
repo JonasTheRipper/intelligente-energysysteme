@@ -1,0 +1,15 @@
+# Development / CI dependencies (in addition to requirements.txt).
+-r requirements.txt
+
+pytest>=7.4
+flake8>=6.0
+
+# Optional tooling used by helper scripts (not required for tests/sims):
+#   folium        -> socal_grid/make_map.py  (interactive Leaflet grid map)
+#   gridstatus    -> data/scripts/download_caiso.py (CAISO load download)
+#   geopandas     -> GIS helpers when working with real shapefiles
+#   rasterio      -> wildfire_cma/gis.from_rasters() (LANDFIRE/3DEP rasters)
+folium>=0.15
+gridstatus>=0.25
+geopandas>=1.0
+# rasterio>=1.3   # uncomment to load real LANDFIRE/3DEP rasters

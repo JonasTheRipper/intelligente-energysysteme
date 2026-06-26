@@ -1,93 +1,257 @@
-# SoCal Wildfires
+# SoCal Wildfires — Grid Co-Simulation
 
+A reproducible co-simulation of **Southern California wildfires impacting the
+power grid**, built on the OFFIS ARL stack ([MIDAS](https://pypi.org/project/midas-mosaik/)
+/ mosaik and [palaestrAI](https://pypi.org/project/palaestrai/)). A wildfire,
+modelled as a **GUARDIAN Constrained-Mutation operator**, spreads across a
+California cellular-automaton landscape, removes the transmission/sub-transmission
+assets it engulfs, and the resulting de-energised grid is solved with pandapower.
 
+This repository delivers four things:
 
-## Getting started
+1. **NOAA-enriched MIDAS scenario** — the SoCal MIDAS co-simulation, with its
+   weather provider switched from DWD Bremen to **NOAA** data (implemented
+   *inside* the MIDAS scenario, not as a separate simulator).
+2. **palaestrAI environment** — the SoCal MIDAS environment wrapped as a
+   first-class `palaestrai.environment.Environment`, plus an experiment run file.
+3. **Wildfire Agent (GUARDIAN CMA)** — a cellular-automaton wildfire driven by an
+   Overseer-Adversary parameter vector Θ, registered against the **full SoCal
+   GIS footprint**, with an optional **PostGIS** persistence layer.
+4. **5-day analysis** — a 120-hour Santa-Ana wildfire / grid co-simulation with
+   KPIs, plots, and a written report demonstrating fire spread → grid impact.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+> Author: Eric MSP Veith · License: GPL-3.0-or-later (see `LICENSE`).
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Repository layout
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/arl-experiments/socal-wildfires.git
-git branch -M main
-git push -uf origin main
+socal_grid/          Geo-referenced SoCal pandapower model + convergence recipe
+  dispatch_and_run.py    "config D": strengthen + co-locate dispatch + Iwamoto-NR
+  socal_grid.json        2,294-bus / 2,595-line model (EPSG:4326)
+midas_socal/         MIDAS scenario (NOAA-enriched)
+  socal_midas.yml        scenario definition (weather = NOAA, not DWD Bremen)
+  weather/noaa_provider.py   writes NOAA weather in the MIDAS CSV schema
+  prepare_midas.py, run_sim.sh
+palaestrai_socal/    palaestrAI environment + experiment run file
+  environment.py         SoCalWildfireEnvironment (sensors/actuators = Θ)
+  experiment.yml         arsenAI/palaestrAI experiment run (phase_0_santa_ana_5day)
+wildfire_cma/        GUARDIAN wildfire cellular automaton + damage mapper + PostGIS
+  cma.py                 WildfireCMA (S, τ, D, Θ); ROS eq-6, spread eq-7
+  gis.py                 SoCal raster (synthetic or LANDFIRE/3DEP), bounds, fuel map
+  damage.py              DamageMapper: bus/line → cell co-registration, asset removal
+  postgis.py, postgis_load.py   PostGIS staging (raster, grid, fire perimeter)
+data/                CAISO actuals, GeoJSON layers, PostGIS init SQL
+analysis/            5-day simulation driver + outputs (run_5day.py, *.png, report)
+tests/               unit (cma, postgis, smoke) + slow system tests
+docs/                MIDAS_INTEGRATION.md
+docker-compose.yml   PostGIS 16 + GIS loader
+.gitlab-ci.yml       CI/CD: lint → unit → system (manual) → simulate (manual)
 ```
 
-## Integrate with your tools
+---
 
-* [Set up project integrations](https://gitlab.com/arl-experiments/socal-wildfires/-/settings/integrations)
+## Quick start
 
-## Collaborate with your team
+```bash
+# 1) install (core runtime)
+pip install -r requirements.txt          # numpy/pandas/pandapower/palaestrai/...
+# or for development + CI:
+pip install -r requirements-dev.txt
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+# 2) fast tests (no grid load, < 5 s)
+pytest -m unit
 
-## Test and Deploy
+# 3) heavy system tests (loads the 5.9 MB grid, runs power flow)
+pytest -m slow
 
-Use the built-in continuous integration in GitLab.
+# 4) the headline result: 5-day wildfire / grid co-simulation
+python analysis/run_5day.py --max-steps 120 --outdir analysis
+#   -> analysis/FIVE_DAY_ANALYSIS.md + four PNG figures + five_day_kpis.csv
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+---
 
-***
+## Reproduce the 5-day result with palaestrAI
 
-# Editing this README
+There are **two equivalent ways** to run the 5-day Santa-Ana episode. Both drive
+the identical `SoCalWildfireEnvironment` (same grid, same GUARDIAN CMA, same Θ
+schedule) and reach the same KPIs.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### A. Standalone driver (no broker needed — recommended first run)
 
-## Suggestions for a good README
+The quickest way to see the headline result. `analysis/run_5day.py` instantiates
+the palaestrAI environment directly and steps it through 120 hourly steps with a
+deterministic Santa-Ana Θ schedule, then writes the report + figures:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+pip install -r requirements.txt
+python analysis/run_5day.py --max-steps 120 --outdir analysis
+```
 
-## Name
-Choose a self-explaining name for your project.
+Expected result (seed 47, synthetic 600×760 raster):
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+| KPI | Value |
+|-----|-------|
+| Baseline served load | ~35,000 MW |
+| Final served load | ~31,328 MW |
+| Buses / lines de-energised | ~213 / ~327 |
+| Peak customers disconnected | ~734,000 (≈ day 2.5) |
+| Final burn footprint | ~166,000 cells (all burned out) |
+| Power flow convergence | 120 / 120 steps |
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+### B. Full palaestrAI run (experiment run file + store/broker)
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+To run it as a *real* palaestrAI experiment — with the Overseer-Adversary agent,
+the run-governor, and results written to the palaestrAI store — use the bundled
+experiment run file `palaestrai_socal/experiment.yml`.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+# 1) install the palaestrAI / MIDAS stack
+pip install -r requirements.txt        # includes palaestrai, palaestrai-mosaik, midas-palaestrai
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+# 2) generate the NOAA weather CSV the scenario reads (one-off)
+python midas_socal/prepare_midas.py
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+# 3) (first time only) initialise the palaestrAI database / config
+palaestrai database-create            # creates the results store
+#   palaestrai database-migrate        # if upgrading an existing store
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# 4) validate the experiment run file loads against the schema
+python -c "from palaestrai.experiment import ExperimentRun; \
+           ExperimentRun.load('palaestrai_socal/experiment.yml'); \
+           print('experiment OK')"
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+# 5) launch the experiment (one 5-day episode, 120 hourly steps)
+palaestrai start palaestrai_socal/experiment.yml
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+What the experiment does (see `palaestrai_socal/experiment.yml`):
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+- **environment** `SoCalWildfireEnvironment` (uid `socal_wildfire`) — the SoCal
+  grid + GUARDIAN CMA, `env_step_min=60`, `max_steps=120`, default ignition
+  `[-118.13, 34.19]` (Eaton-fire-like origin).
+- **agent** `overseer_adversary` — observes the 13 grid+fire sensors and acts
+  through the 6 Θ actuators. Per the paper-faithful design it uses
+  `DummyBrain`/`DummyMuscle`/`DummyObjective` (it **acts but does not learn**);
+  the modelled mechanism is the constrained mutation, not a trained policy.
+- **reward / objective** — `customers_disconnected` (the adversary maximises
+  grid harm).
+- **simulation** — `TakingTurnsSimulationController`, one episode (`episodes: 1`),
+  raw actuators stored.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+> **Note on equivalence:** the standalone driver (A) supplies the Santa-Ana Θ on
+> a fixed meteorological schedule so the run is fully reproducible offline. The
+> palaestrAI run (B) lets the adversary agent emit Θ each turn within the same
+> actuator bounds. For the `DummyMuscle` adversary the dynamics match; swap in a
+> learning brain to *optimise* the ignition/wind strategy against the grid.
 
-## License
-For open source projects, say how it is licensed.
+The **Wildfire Agent / GUARDIAN CMA is documented in full in
+[`docs/CMA_AGENT.md`](docs/CMA_AGENT.md)** — the spread physics, fuel model,
+damage mapper, the Θ vector, and the Python API.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+---
+
+## The four deliverables
+
+### 1. NOAA weather in the MIDAS scenario
+
+`midas_socal/weather/noaa_provider.py` fetches/serialises NOAA weather into the
+exact CSV schema the MIDAS `weather` simulator consumes (`socal_noaa_weather.csv`).
+The scenario `midas_socal/socal_midas.yml` points its `weather` module at this
+CSV instead of the bundled DWD Bremen data — so the replacement lives **in the
+scenario**, with no new simulator. See `docs/MIDAS_INTEGRATION.md` for the wiring
+and the data-path fix.
+
+```bash
+midas_socal/run_sim.sh            # full scenario
+midas_socal/run_sim.sh --smoke    # short run (CI / quick check)
+```
+
+### 2. palaestrAI environment
+
+`palaestrai_socal/environment.py` turns the SoCal MIDAS environment into a
+`palaestrai.environment.Environment`. It exposes:
+
+- **13 sensors** — grid + fire telemetry (`min/mean_bus_vm_pu`,
+  `customers_connected/disconnected`, `saidi_minutes`, `fire_front_cells`,
+  `fire_affected_cells`, `failed_buses`, `failed_lines`, `wind_*`,
+  `grid_served_mw`, `pf_converged`).
+- **6 actuators = Θ** — `ignition_lon`, `ignition_lat`, `kappa`,
+  `dead_fuel_moisture`, `wind_speed`, `wind_dir_deg`.
+- **reward** — `customers_disconnected` (the Overseer-Adversary maximises grid harm).
+
+The environment builds a *converging, balanced* baseline via the proven
+`socal_grid/dispatch_and_run.py` recipe before the wildfire mutates it.
+`palaestrai_socal/experiment.yml` is a valid palaestrAI experiment run
+(`phase_0_santa_ana_5day`, 120 hourly steps); validate it with
+`ExperimentRun.load("palaestrai_socal/experiment.yml")`.
+
+### 3. Wildfire Agent — GUARDIAN cellular automaton
+
+`wildfire_cma/cma.py` implements the GUARDIAN four-tuple `(S, τ, D, Θ)`:
+
+- **S** — cell states `UNBURNED / BURNING / BURNED_OUT`.
+- **τ** — the cellular automaton: rate-of-spread (eq-6) and per-neighbour
+  ignition probability (eq-7) over a Moore neighbourhood, with wind, slope, and
+  fuel-moisture factors; burning cells burn out after `t_burn_steps`.
+- **D** — `damage.DamageMapper` co-registers every grid bus and line to raster
+  cells and removes assets the fire engulfs (with a radiant-heat clearance buffer).
+- **Θ** — the Overseer-Adversary control vector (ignition, wind, fuel moisture,
+  global ROS multiplier `κ`).
+
+The landscape spans the **full SoCal footprint**
+(`SOCAL_BOUNDS = (-121.3, 32.4, -113.7, 37.7)`). `gis.synthetic_socal()` builds a
+self-contained synthetic raster; `gis.from_rasters()` loads real LANDFIRE/3DEP
+rasters when `rasterio` is available.
+
+> **Full documentation of the Wildfire Agent — the physics (eq. 6 / eq. 7), the
+> fuel model, the damage mapper, the Θ vector, and the public API — is in
+> [`docs/CMA_AGENT.md`](docs/CMA_AGENT.md).**
+
+**PostGIS** (`wildfire_cma/postgis.py`) stages the raster, the grid, and fire
+perimeters. Bring up a server with `docker-compose up` (PostGIS 16-3.4); the
+`gis-loader` service loads the synthetic raster + grid via `postgis_load.py`.
+
+### 4. Five-day analysis
+
+`analysis/run_5day.py` drives the palaestrAI environment through a 120-hour
+Santa-Ana episode (strong dry offshore wind days 1–3, marine-layer recovery
+days 4–5) and produces:
+
+- `five_day_kpis.csv` — full per-step KPI table.
+- `fire_growth.png`, `grid_impact.png`, `saidi_voltage.png`,
+  `fire_perimeter_day5.png`.
+- `FIVE_DAY_ANALYSIS.md` — narrative report.
+
+A representative run ignites in the LA basin and grows to ~166k affected cells,
+de-energising ~213 buses / ~327 lines and dropping served load from 35,000 MW to
+~31,300 MW (~734k customers disconnected at peak) — the explosive growth occurs
+during the day-1–3 Santa-Ana window and plateaus as the front burns out.
+
+---
+
+## CI/CD
+
+`.gitlab-ci.yml` runs **light CI on every push** and keeps the expensive work
+behind manual triggers:
+
+| Stage | Trigger | What it does |
+|-------|---------|--------------|
+| `lint` | push | flake8 (hard-fail on syntax/undefined; style advisory) |
+| `unit` | push | `pytest -m unit` (cma, postgis, smoke — no grid, < 5 s) |
+| `system` | **manual** | `pytest -m slow` (grid dispatch + power flow + palaestrAI env) |
+| `simulate` | **manual** | NOAA MIDAS smoke run + the full 5-day co-simulation, published as artifacts |
+
+---
+
+## Provenance & notes
+
+- Grid convergence depends on the `dispatch_and_run` "config D" recipe — raw
+  `pp.runpp` on `socal_grid.json` diverges. Do not bump `numpy`/`pandas` without
+  re-validating; palaestrAI constrains `numpy<2`, `pandas==2.1.4`.
+- The GUARDIAN framing follows the attached paper: the wildfire is a *constrained
+  mutation* of the grid driven by Θ, **not** a learning DRL agent.
+- Modelled after the January 2025 Eaton/Palisades LA-basin fires (front regime
+  ~60–80 m/min under Santa-Ana forcing).

@@ -1,0 +1,111 @@
+# =============================================================================
+# palaestrAI experiment run: SoCal grid under a GUARDIAN wildfire CMA
+# =============================================================================
+# This experiment drives the Southern California MIDAS grid environment
+# (2,294 buses, 35 GW peak, NOAA-weather-fed) with a wildfire modelled as a
+# Constrained Mutation operator of the grid -- the GUARDIAN four-tuple
+# (S, tau, D, Theta).
+#
+# The Overseer-Adversary is represented as a palaestrAI *agent* whose action is
+# the parameter vector Theta (ignition lon/lat, kappa, fuel moisture, wind).
+# Per the paper-faithful framing chosen for this build, the adversary is NOT a
+# learning DRL agent: it uses the DummyMuscle, which samples/holds an action
+# within the actuator space. The wildfire dynamics (cellular automaton tau),
+# the damage mapper D, and the resulting grid power flow live entirely inside
+# the SoCalWildfireEnvironment, so the "intelligence" is the constrained
+# mutation, not a trained policy.
+#
+# Run it with:
+#   palaestrai start palaestrai_socal/experiment.yml
+# (a running palaestrAI store / broker is required; see README).
+# =============================================================================
+
+uid: socal_wildfire_guardian
+seed: 47
+version: 3.5.9
+
+schedule:
+  # -------------------------------------------------------------------------
+  # Phase 0 -- a single 5-day Santa-Ana wildfire episode against the grid.
+  # env_step_min = 60 and max_steps = 120 => 120 hourly steps = 5 days.
+  # -------------------------------------------------------------------------
+  - phase_0_santa_ana_5day:
+      environments:
+        - environment:
+            name: palaestrai_socal.environment:SoCalWildfireEnvironment
+            uid: socal_wildfire
+            params:
+              # full SoCal footprint raster (offline-deterministic fuel/DEM)
+              raster_nrows: 600
+              raster_ncols: 760
+              # cellular-automaton timestep and environment macro-step
+              dt_cma_min: 5.0
+              env_step_min: 60.0
+              # radiant-heat clearance buffer for overhead-line failure
+              clearance_m: 120.0
+              t_burn_steps: 6
+              # 120 hourly steps == 5 simulated days
+              max_steps: 120
+              # Eaton-fire-like origin in the San Gabriel foothills above the
+              # LA basin; the adversary may override via the ignition actuators.
+              default_ignition: [-118.13, 34.19]
+              # NOAA weather CSV produced by midas_socal/prepare_midas.py
+              weather_csv: "~/.config/midas/midas_data/socal_noaa_weather.csv"
+              seed: 47
+
+      agents:
+        - name: overseer_adversary
+          # The Overseer-Adversary that chooses Theta. DummyBrain/DummyMuscle =
+          # no learning; the constrained mutation is the modelled mechanism.
+          brain:
+            name: palaestrai.agent.dummy_brain:DummyBrain
+            params: {}
+          muscle:
+            name: palaestrai.agent.dummy_muscle:DummyMuscle
+            params: {}
+          objective:
+            # The adversary's objective is grid harm: maximise disconnected
+            # customers (the environment's reward).
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          # Sensors the adversary observes (grid + fire telemetry).
+          sensors:
+            - socal_wildfire.min_bus_vm_pu
+            - socal_wildfire.mean_bus_vm_pu
+            - socal_wildfire.customers_connected
+            - socal_wildfire.customers_disconnected
+            - socal_wildfire.saidi_minutes
+            - socal_wildfire.fire_front_cells
+            - socal_wildfire.fire_affected_cells
+            - socal_wildfire.failed_buses
+            - socal_wildfire.failed_lines
+            - socal_wildfire.wind_speed_m_per_s
+            - socal_wildfire.wind_dir_deg
+            - socal_wildfire.grid_served_mw
+            - socal_wildfire.pf_converged
+          # Actuators = the Theta parameter vector.
+          actuators:
+            - socal_wildfire.ignition_lon
+            - socal_wildfire.ignition_lat
+            - socal_wildfire.kappa
+            - socal_wildfire.dead_fuel_moisture
+            - socal_wildfire.wind_speed
+            - socal_wildfire.wind_dir_deg
+
+      simulation:
+        name: palaestrai.simulation.taking_turns_simulation_controller:TakingTurnsSimulationController
+        conditions:
+          - name: palaestrai.simulation.vanilla_simcontroller_termination_condition:VanillaSimControllerTerminationCondition
+            params: {}
+
+      phase_config:
+        mode: train          # no learning happens, but the agent still acts
+        worker: 1
+        episodes: 1          # one 5-day episode
+        evaluate_every: 0
+        store_raw_actuators: true
+
+run_config:
+  condition:
+    name: palaestrai.experiment.vanilla_rungovernor_termination_condition:VanillaRunGovernorTerminationCondition
+    params: {}
