@@ -278,10 +278,20 @@ class WildfireCMA:
         return 1.0 - math.exp(-(r * self.dt_cma_min) / dist)
 
     # -- transition function tau -------------------------------------------
-    def step(self) -> None:
-        """Advance the CA one CMA sub-step: tau(S, R, Theta) -> S."""
+    def _transition(
+        self, state: np.ndarray, burn_timer: np.ndarray
+    ) -> int:
+        """Pure-ish tau: advance one CMA sub-step on the *given* arrays.
+
+        Mutates ``state`` and ``burn_timer`` in place (so it works on the CMA's
+        own ``self.state`` *or* on an externally injected grid, e.g. the
+        :class:`WildfireCmaAgent` reconstructing ``S`` from the
+        ``gis.cell_state`` sensor) and returns the number of new ignitions.
+        The wind/slope/fuel physics (``self.theta``, ``self.raster``,
+        ``self.rng``) are unchanged -- only the state buffers are parameterised.
+        """
         nrows, ncols = self.raster.shape
-        burning = np.argwhere(self.state == BURNING)
+        burning = np.argwhere(state == BURNING)
         new_ignitions: List[Tuple[int, int]] = []
 
         for (r, c) in burning:
@@ -289,7 +299,7 @@ class WildfireCMA:
                 nr, nc = r + dr, c + dc
                 if not (0 <= nr < nrows and 0 <= nc < ncols):
                     continue
-                if self.state[nr, nc] != UNBURNED:
+                if state[nr, nc] != UNBURNED:
                     continue
                 if not self._burnable(nr, nc):
                     continue
@@ -298,15 +308,20 @@ class WildfireCMA:
                     new_ignitions.append((nr, nc))
 
         # apply burn-out timers
-        self.burn_timer[self.state == BURNING] += 1
-        burned = (self.state == BURNING) & (self.burn_timer >= self.t_burn_steps)
-        self.state[burned] = BURNED_OUT
+        burn_timer[state == BURNING] += 1
+        burned = (state == BURNING) & (burn_timer >= self.t_burn_steps)
+        state[burned] = BURNED_OUT
 
         for (nr, nc) in new_ignitions:
-            if self.state[nr, nc] == UNBURNED:
-                self.state[nr, nc] = BURNING
-                self.burn_timer[nr, nc] = 0
+            if state[nr, nc] == UNBURNED:
+                state[nr, nc] = BURNING
+                burn_timer[nr, nc] = 0
 
+        return len(new_ignitions)
+
+    def step(self) -> None:
+        """Advance the CA one CMA sub-step on ``self.state``: tau(S, R, Theta)."""
+        self._transition(self.state, self.burn_timer)
         self.step_count += 1
 
     def advance(self, minutes: float) -> None:
@@ -314,6 +329,25 @@ class WildfireCMA:
         n = max(1, int(round(minutes / self.dt_cma_min)))
         for _ in range(n):
             self.step()
+
+    def advance_state(
+        self,
+        state: np.ndarray,
+        burn_timer: np.ndarray,
+        minutes: float,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Advance an *injected* fire state by ``minutes`` (>= 1 CMA sub-step).
+
+        Used by the :class:`WildfireCmaAgent`, which owns the authoritative
+        ``S`` (read from the ``gis.cell_state`` sensor each step) and the
+        per-cell ``burn_timer`` carried across agent steps. Returns the same
+        arrays after mutation so callers can diff against a pre-step copy to
+        derive the ``gis.cell_mutations`` edit set.
+        """
+        n = max(1, int(round(minutes / self.dt_cma_min)))
+        for _ in range(n):
+            self._transition(state, burn_timer)
+        return state, burn_timer
 
     # -- diagnostics -------------------------------------------------------
     def stats(self) -> Dict[str, float]:

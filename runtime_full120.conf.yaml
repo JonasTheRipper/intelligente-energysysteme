@@ -1,0 +1,5 @@
+store_uri: "sqlite:///_outputs/palaestrai_v02_full120.db"
+executor_bus_port: 4242
+logger_port: 0
+public_bind: False
+store_buffer_size: 1

@@ -25,8 +25,15 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-_SLOW_MODULES = {"test_damage_mapper", "test_palaestrai_env", "test_midas_steps"}
-_UNIT_MODULES = {"test_cma", "test_postgis", "test_gis"}
+_SLOW_MODULES = {
+    "test_damage_mapper", "test_palaestrai_env", "test_midas_steps",
+    "test_gis_world_env", "test_store_render",
+}
+_UNIT_MODULES = {
+    "test_cma", "test_postgis", "test_gis",
+    "test_spaces", "test_grid_kpis", "test_wildfire_agent",
+    "test_damage_agent",
+}
 
 
 def pytest_collection_modifyitems(config, items):

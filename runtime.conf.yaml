@@ -1,0 +1,8 @@
+# palaestrAI runtime config for SELF-CONTAINED local runs (v0.2).
+# A local sqlite store keeps the whole pipeline + store writes in one file so
+# the experiment is reproducible without a postgres/broker stack.
+store_uri: "sqlite:///_outputs/palaestrai_v02.db"
+executor_bus_port: 4242
+logger_port: 0
+public_bind: False
+store_buffer_size: 1

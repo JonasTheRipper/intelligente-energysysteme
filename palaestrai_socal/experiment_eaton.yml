@@ -1,0 +1,168 @@
+# =============================================================================
+# EATON FIRE scenario (Jan 2025) -- second v0.2 validation run.
+#
+# Reuses the EXACT v0.2 machinery of experiment_multihazard.yml (real MIDAS/mosaik
+# powergrid + GisWorldEnvironment + WildfireCmaAgent + DamageMapperAgent +
+# grid_probe), changing ONLY the scenario inputs:
+#
+#   * ignition_points = [[-118.09358, 34.18604]]  -- the CPUC/SCE documented
+#       preliminary origin in Eaton Canyon, near the SCE M6T1 transmission tower
+#       (verified to land on burnable land: real SRTM rc=(397,320), dem~467 m,
+#       fuel class 3, 100% land neighbourhood).
+#   * start_date = 2025-01-08 02:18:00+0000  (= 2025-01-07 18:18 PST, the Santa
+#       Ana wind event onset). MIDAS start_date is UTC.
+#   * wind = strong Santa Ana blowing FROM the NE (wind_dir_deg=45 => blows TOWARD
+#       the SW, 225deg) downslope into the Altadena/foothill communities SW of the
+#       canyon; wind_speed bumped to 25 m/s for the high-wind event.
+#
+# NO suppression agent: Eaton had near-zero effective early firefighting, which is
+# exactly why it validates the v0.2 no-suppression modelling honestly.
+#
+# Same Postgres+TimescaleDB store + trimmed state_dump as the Santa-Ana baseline:
+#   env PYTHONPATH=$PWD palaestrai -c runtime_pg.conf.yaml start \
+#     palaestrai_socal/experiment_eaton.yml
+# =============================================================================
+uid: socal_v02_eaton
+seed: 47
+version: 3.5.9
+
+schedule:
+  - phase_0_eaton:
+      environments:
+        - environment:
+            name: palaestrai_socal.gis_world_env:GisWorldEnvironment
+            uid: gis_world
+            params:
+              raster_nrows: 600
+              raster_ncols: 760
+              use_real_dem: true
+              env_step_min: 60.0
+              max_steps: 120
+              wind_speed: 25.0
+              wind_dir_deg: 45.0
+          # Trim the stored state_dump (disk fix): keep dynamic cell_state + wind +
+          # static scalars each step, the two big static grids only on row 0.
+          state_transformer:
+            name: palaestrai_socal.store_filters:StoreDumpTrimmer
+            params:
+              keep_suffixes:
+                - gis.grid_shape
+                - gis.bounds
+                - gis.cell_size_m
+                - gis.cell_state
+                - gis.wind_field
+              static_suffixes:
+                - gis.fuel_class
+                - gis.elevation_m
+        - environment:
+            name: palaestrai_socal.midas_grid_env:SocalMidasGridEnvironment
+            uid: socal_grid
+            params:
+              step_size: 3600
+              max_steps: 120
+              end: 432000          # 120 steps x 3600 s
+              start_date: "2025-01-08 02:18:00+0000"
+              silent: true
+          # Trim MIDAS dump: keep load p_mw (served-MW shortfall) + grid_probe
+          # health/vm sensors; drop the rest of the 2294-bus pandapower dump.
+          state_transformer:
+            name: palaestrai_socal.store_filters:StoreDumpTrimmer
+            params:
+              keep_substrings:
+                - "-load-"
+              keep_suffixes:
+                - Grid-0.health
+                - bus-0.vm_pu
+
+      agents:
+        - name: wildfire
+          brain:
+            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
+            params: {memory_size_limit: 2}
+          muscle:
+            name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
+            params:
+              ignition_points: [[-118.09358, 34.18604]]
+              ignition_step: 1
+              env_step_min: 60.0
+              dt_cma_min: 5.0
+              t_burn_steps: 6
+              kappa: 1.5
+              dead_fuel_moisture: 0.05
+              wind_speed: 25.0
+              wind_dir_deg: 45.0
+              raster_nrows: 600
+              raster_ncols: 760
+          objective:
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          sensors:
+            - gis_world.gis.fuel_class
+            - gis_world.gis.elevation_m
+            - gis_world.gis.cell_state
+          actuators:
+            - gis_world.gis.cell_mutations
+
+        - name: damage_mapper
+          brain:
+            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
+            params: {memory_size_limit: 2}
+          muscle:
+            name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
+            params:
+              grid_json: midas_socal/socal_grid_midas_rescaled.json
+              raster_nrows: 600
+              raster_ncols: 760
+          objective:
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          sensors:
+            - gis_world.gis.cell_state
+          actuators:
+            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
+            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
+            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
+            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
+            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
+            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
+            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
+            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
+            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
+            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
+            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
+            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
+            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
+            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
+
+        - name: grid_probe
+          brain:
+            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
+            params: {memory_size_limit: 2}
+          muscle:
+            name: palaestrai.agent.dummy_muscle:DummyMuscle
+            params: {}
+          objective:
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          sensors:
+            - socal_grid.Powergrid-0.0-bus-0.vm_pu
+            - socal_grid.Powergrid-0.Grid-0.health
+          actuators:
+            - socal_grid.Powergrid-0.0-load-0-0.p_mw
+
+      simulation:
+        name: palaestrai.simulation.taking_turns_simulation_controller:TakingTurnsSimulationController
+        conditions:
+          - name: palaestrai.simulation.vanilla_simcontroller_termination_condition:VanillaSimControllerTerminationCondition
+            params: {}
+
+      phase_config:
+        mode: train
+        worker: 1
+        episodes: 1
+        evaluate_every: 1000000
+
+run_config:
+  condition:
+    name: palaestrai.experiment.vanilla_rungovernor_termination_condition:VanillaRunGovernorTerminationCondition
+    params: {}

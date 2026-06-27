@@ -1,27 +1,30 @@
-"""Build a wildfire/grid timelapse animation from the 5-day co-simulation.
+"""Build a wildfire/grid timelapse animation from the v0.2 palaestrAI store.
 
-This re-runs the *deterministic* (seed=7) ``SoCalWildfireEnvironment`` exactly
-as ``run_5day.py`` does, but at every hourly step it snapshots the spatial state
-needed for an animation:
+v0.2 is **store-only**: this no longer re-runs the environment. It reconstructs
+every frame from the ``world_states`` rows the two-environment run wrote to the
+palaestrAI sqlite store (see :mod:`analysis.store_readers`), so the animation
+reflects exactly what the agent-driven co-simulation produced:
 
-* the CMA cellular-automaton ``state`` grid (UNBURNED / BURNING / BURNED_OUT),
-* the cumulative set of fire-failed transmission **lines** (with their lon/lat
-  poly-lines) and **buses**,
-* the running KPI row (cumulative SAIDI, served MW, customers disconnected, ...).
+* the per-step hazard grid ``S`` (UNBURNED / BURNING / BURNED_OUT) from the
+  ``gis_world`` env's ``gis.cell_state`` sensor,
+* the served-MW shortfall (-> customers out -> cumulative SAIDI) derived from
+  the ``socal_grid`` env's load ``p_mw`` sensors as the DamageMapperAgent sheds
+  fire-affected load.
 
-It then renders a two-panel animated GIF (and an MP4 if ffmpeg is available):
+It then renders a two-panel animated GIF (and an MP4 if ffmpeg is available)
+using the **unchanged v0.1 ``render()``**:
 
-  LEFT  — GIS map: fuel background, live fire perimeter (burning + burned-out),
-          all SoCal lines in grey with the fire-failed lines highlighted red,
+  LEFT  — GIS map: hillshaded terrain, live fire perimeter (burning + burned),
           the ignition star, and a moving clock/wind annotation.
   RIGHT — the cumulative SAIDI curve drawn progressively, with a marker riding
-          the curve at the current step and a small failed-asset readout.
+          the curve at the current step and a small KPI readout.
 
-Frames: one per simulation hour (120). Output written to ``analysis/``.
+Run:
+  python analysis/make_timelapse.py \
+    --store sqlite:///_outputs/palaestrai_v02.db --stride 2
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
 
@@ -38,114 +41,26 @@ _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from palaestrai_socal.environment import SoCalWildfireEnvironment  # noqa: E402
-from wildfire_cma.cma import BURNING, BURNED_OUT, UNBURNED  # noqa: E402
+from analysis.store_readers import read_run  # noqa: E402
 
-# reuse the EXACT meteorology + ignition from the published 5-day run
-from analysis.run_5day import (  # noqa: E402
-    theta_schedule, make_actuators, _sv, IGNITION_LON, IGNITION_LAT,
-)
+# ignition marker for the render() star. Matches the WildfireCmaAgent default
+# ``ignition_points`` in experiment_multihazard.yml (the Eaton-like LA origin).
+IGNITION_LON, IGNITION_LAT = -118.13, 34.19
 
 
-def _line_lonlat(net, line_idx):
-    """Return [(lon,lat), ...] poly-line for a pandapower line, or []."""
-    geo = net.line.at[line_idx, "geo"] if "geo" in net.line.columns else None
-    if geo is None or (isinstance(geo, float) and not isinstance(geo, str)):
-        return []
-    try:
-        g = json.loads(geo) if isinstance(geo, str) else geo
-        if g.get("type") == "LineString":
-            return [(c[0], c[1]) for c in g["coordinates"]]
-    except Exception:
-        return []
-    return []
-
-
-def _extent(raster):
-    minlon, minlat, maxlon, maxlat = raster.bounds
-    return [minlon, maxlon, minlat, maxlat]
-
-
-def capture(max_steps=120, env_step_min=60.0, seed=7):
-    """Run the deterministic sim, returning per-step spatial + KPI snapshots."""
-    env = SoCalWildfireEnvironment(
-        uid="socal_5day_timelapse",
-        params={
-            "env_step_min": env_step_min,
-            "dt_cma_min": 5.0,
-            "max_steps": max_steps,
-            "raster_nrows": 600,
-            "raster_ncols": 760,
-            "t_burn_steps": 6,
-            "seed": seed,
-            "default_ignition": (IGNITION_LON, IGNITION_LAT),
-        },
+def capture_from_store(
+    store_uri: str = "sqlite:///_outputs/palaestrai_v02.db",
+    gis_uid: str = "gis_world",
+    grid_uid: str = "socal_grid",
+    env_step_min: float = 60.0,
+):
+    """Reconstruct ``(snaps, meta)`` for ``render()`` entirely from the store."""
+    print(f"[timelapse] reading store {store_uri}")
+    snaps, meta = read_run(
+        store_uri, gis_uid=gis_uid, grid_uid=grid_uid, env_step_min=env_step_min
     )
-    print("[timelapse] starting environment (dispatch + baseline PF)...")
-    env.start_environment()
-    base_served = env._base_served_mw
-    print(f"[timelapse] baseline served = {base_served:,.0f} MW")
-
-    # static geometry, captured once
-    raster = env._raster
-    extent = _extent(raster)
-    burnable = (raster.fuel != 0).astype(float)
-    fuel = raster.fuel.copy()
-    dem = raster.dem.astype(float).copy()
-    delta_m = float(raster.delta_m)
-
-    # all line poly-lines (lon/lat) keyed by pandapower line index
-    all_lines = {}
-    for ln in env._net.line.index:
-        seg = _line_lonlat(env._net, ln)
-        if len(seg) >= 2:
-            all_lines[int(ln)] = seg
-
-    act_specs = env._actuator_specs()
-    snaps = []
-    for step in range(1, max_steps + 1):
-        vals = theta_schedule(step - 1, env_step_min)
-        acts = make_actuators(act_specs, vals)
-        state = env.update(acts)
-
-        grid = env._cma.state
-        # compact the fire grid to a small int8 array (0 unburned,1 burning,2 burned)
-        fire_code = np.zeros(grid.shape, dtype=np.int8)
-        fire_code[grid == BURNING] = 1
-        fire_code[grid == BURNED_OUT] = 2
-
-        failed_lines = set(int(x) for x in env._damage._failed_lines)
-        snaps.append({
-            "step": step,
-            "hour": step * env_step_min / 60.0,
-            "day": (step * env_step_min / 60.0) / 24.0,
-            "fire_code": fire_code,
-            "failed_lines": failed_lines,
-            "wind_speed": _sv(state, "wind_speed_m_per_s"),
-            "saidi": _sv(state, "saidi_minutes"),
-            "served_mw": _sv(state, "grid_served_mw"),
-            "failed_bus_n": int(_sv(state, "failed_buses")),
-            "failed_line_n": int(_sv(state, "failed_lines")),
-            "cust_disc": _sv(state, "customers_disconnected"),
-        })
-        if step % 12 == 0 or step == 1:
-            print(f"[timelapse] h{step:3d} burning="
-                  f"{int((fire_code==1).sum()):5d} burned="
-                  f"{int((fire_code==2).sum()):6d} "
-                  f"failed_lines={len(failed_lines):4d} "
-                  f"SAIDI={snaps[-1]['saidi']:.0f}")
-        if state.done:
-            break
-
-    meta = {
-        "extent": extent,
-        "burnable": burnable,
-        "fuel": fuel,
-        "dem": dem,
-        "delta_m": delta_m,
-        "all_lines": all_lines,
-        "base_served": base_served,
-    }
+    print(f"[timelapse] reconstructed {len(snaps)} frames; "
+          f"baseline served = {meta['base_served']:,.0f} MW")
     return snaps, meta
 
 
@@ -181,7 +96,7 @@ def _topo_basemap(dem, delta_m, ocean_mask=None):
     return np.clip(rgb, 0, 1)
 
 
-def render(snaps, meta, outdir=None, stride=1, fps=12):
+def render(snaps, meta, outdir=None, stride=1, fps=12, title=None):
     outdir = outdir or _HERE
     os.makedirs(outdir, exist_ok=True)
     extent = meta["extent"]
@@ -209,8 +124,9 @@ def render(snaps, meta, outdir=None, stride=1, fps=12):
         1, 2, figsize=(15.5, 7.2),
         gridspec_kw={"width_ratios": [1.32, 1.0]},
     )
-    fig.suptitle("SoCal Santa-Ana Wildfire — GIS spread, grid line outages & SAIDI accrual",
-                 fontsize=15, fontweight="bold", y=0.975)
+    fig.suptitle(
+        title or "SoCal Santa-Ana Wildfire — GIS spread, grid line outages & SAIDI accrual",
+        fontsize=15, fontweight="bold", y=0.975)
 
     # ---- LEFT: GIS map static layers -------------------------------------
     # topographic basemap: hillshaded elevation (terrain hypsometric tint).
@@ -368,12 +284,27 @@ def render(snaps, meta, outdir=None, stride=1, fps=12):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max-steps", type=int, default=120)
+    ap.add_argument("--store", default="sqlite:///_outputs/palaestrai_v02.db",
+                    help="palaestrAI store URI or sqlite path to read frames from")
+    ap.add_argument("--gis-uid", default="gis_world")
+    ap.add_argument("--grid-uid", default="socal_grid")
     ap.add_argument("--stride", type=int, default=1,
                     help="render every Nth hourly snapshot")
     ap.add_argument("--fps", type=int, default=12)
     ap.add_argument("--outdir", default=None)
+    ap.add_argument("--ignition-lon", type=float, default=None,
+                    help="override ignition star longitude (scenario-specific)")
+    ap.add_argument("--ignition-lat", type=float, default=None,
+                    help="override ignition star latitude (scenario-specific)")
+    ap.add_argument("--title", default=None,
+                    help="override the figure suptitle (scenario-specific)")
     args = ap.parse_args()
 
-    snaps, meta = capture(max_steps=args.max_steps)
-    render(snaps, meta, outdir=args.outdir, stride=args.stride, fps=args.fps)
+    if args.ignition_lon is not None and args.ignition_lat is not None:
+        globals()["IGNITION_LON"] = args.ignition_lon
+        globals()["IGNITION_LAT"] = args.ignition_lat
+
+    snaps, meta = capture_from_store(
+        store_uri=args.store, gis_uid=args.gis_uid, grid_uid=args.grid_uid)
+    render(snaps, meta, outdir=args.outdir, stride=args.stride, fps=args.fps,
+           title=args.title)

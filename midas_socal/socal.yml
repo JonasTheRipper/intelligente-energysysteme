@@ -1,0 +1,34 @@
+#######################################################################
+# MIDAS scenario (v0.2): Southern California grid, REAL mosaik co-sim
+#
+# A deliberately *minimal* scenario for the v0.2 two-environment palaestrAI
+# design: just the store + powergrid modules. The geo-referenced SoCal
+# pandapower model (2,294 buses / 2,595 lines / 1,932 loads / 2,465 sgen) is
+# loaded as the gridfile and power-flowed by midas-powergrid under mosaik every
+# step. The embedded load / sgen set-points in the JSON give a converging
+# baseline dispatch; the DamageMapperAgent sheds load (load.p_mw -> 0) through
+# the native MIDAS powergrid actuators to emulate fire-driven outages.
+#
+# with_arl is injected by midas_palaestrai.descriptor.Descriptor so every
+# element is exposed as a palaestrAI sensor/actuator.
+#
+# 120 steps of 60 min  ->  five simulated days (matches v0.1 phase_0).
+#######################################################################
+socal:
+  parent:
+  # 'store' module removed (v0.2 disk fix): the MIDAS midas_store wrote a separate
+  # socal_v02.csv that grew to ~99 MB and is redundant -- the palaestrAI store is
+  # the single source of truth (Goal 7). midas_powergrid.connect_to_db is guarded
+  # (returns early when no db model is found), so dropping 'store' is safe.
+  modules: [powergrid]
+  start_date: 2025-01-07 00:00:00+0000
+  end: 120*60*60
+  step_size: 60*60
+
+  powergrid_params:
+    socal:
+      # voltage-rescaled (f=0.8) net: clears midas_powergrid's 440 kV vn_kv
+      # sensor cap while keeping the per-unit power flow identical.
+      # See midas_socal/rescale_grid_voltage.py.
+      gridfile: /home/user/workspace/socal-wildfires/midas_socal/socal_grid_midas_rescaled.json
+      plotting: false

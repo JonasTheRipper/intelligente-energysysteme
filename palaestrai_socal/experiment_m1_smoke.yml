@@ -1,0 +1,96 @@
+# =============================================================================
+# M1 SMOKE experiment: prove the v0.2 TWO-ENVIRONMENT pipeline end-to-end.
+#
+#   * gis_world  -- GisWorldEnvironment (spatial substrate)
+#   * socal_grid -- SocalMidasGridEnvironment (REAL palaestrai_mosaik + MIDAS
+#                   powergrid stepping the SoCal net under mosaik)
+#
+# Two DummyBrain/DummyMuscle agents (no learning) just exercise each env so the
+# store gets world_states rows for BOTH environment_ids. Real WildfireCmaAgent /
+# DamageMapperAgent are wired in experiment_multihazard.yml (M2/M3).
+#
+# Run (3 steps): palaestrai -c runtime.conf.yaml start \
+#                  palaestrai_socal/experiment_m1_smoke.yml
+# =============================================================================
+uid: socal_v02_m1_smoke
+seed: 47
+version: 3.5.9
+
+schedule:
+  - phase_0_smoke:
+      environments:
+        - environment:
+            name: palaestrai_socal.gis_world_env:GisWorldEnvironment
+            uid: gis_world
+            params:
+              raster_nrows: 120
+              raster_ncols: 152
+              use_real_dem: false
+              env_step_min: 60.0
+              max_steps: 3
+              wind_speed: 18.0
+              wind_dir_deg: 225.0
+        - environment:
+            name: palaestrai_socal.midas_grid_env:SocalMidasGridEnvironment
+            uid: socal_grid
+            params:
+              step_size: 3600
+              max_steps: 3
+              end: 10800
+              start_date: "2025-01-07 00:00:00+0000"
+              silent: true
+
+      agents:
+        - name: gis_driver
+          brain:
+            name: palaestrai.agent.dummy_brain:DummyBrain
+            params: {}
+          muscle:
+            name: palaestrai.agent.dummy_muscle:DummyMuscle
+            params: {}
+          objective:
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          sensors:
+            - gis_world.gis.front_size
+            - gis_world.gis.affected_cells
+          actuators:
+            - gis_world.gis.wind_override
+        - name: grid_driver
+          brain:
+            name: palaestrai.agent.dummy_brain:DummyBrain
+            params: {}
+          muscle:
+            name: palaestrai.agent.dummy_muscle:DummyMuscle
+            params: {}
+          objective:
+            name: palaestrai.agent.dummy_objective:DummyObjective
+            params: {}
+          sensors:
+            - socal_grid.Powergrid-0.0-bus-0.vm_pu
+            - socal_grid.Powergrid-0.Grid-0.health
+          actuators:
+            - socal_grid.Powergrid-0.0-load-0-0.p_mw
+
+      simulation:
+        name: palaestrai.simulation.taking_turns_simulation_controller:TakingTurnsSimulationController
+        conditions:
+          - name: palaestrai.simulation.vanilla_simcontroller_termination_condition:VanillaSimControllerTerminationCondition
+            params: {}
+
+      phase_config:
+        mode: train
+        worker: 1
+        episodes: 1
+        # ``evaluate_every`` is REQUIRED by the schema but must NOT be 0:
+        # MaxEpisodesTerminationCondition computes ``sum_max_episodes //
+        # evaluate_every`` at phase teardown, so 0 raises ZeroDivisionError.
+        # A large value makes ``episodes // evaluate_every == 0`` (no extra
+        # evaluation episodes) while keeping the division well-defined.
+        evaluate_every: 1000000
+        store_raw_actuators: true
+
+run_config:
+  condition:
+    name: palaestrai.experiment.vanilla_rungovernor_termination_condition:VanillaRunGovernorTerminationCondition
+    params: {}
