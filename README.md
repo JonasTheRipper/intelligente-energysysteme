@@ -272,7 +272,45 @@ after `SUPPRESS_PERSIST_STEPS` steps.
   (`python analysis/firefighter_report.py --run 0=... --run 3=...`). The
   timelapse renders retardant lines in retardant-pink.
 
-See [`docs/AGENTS.md`](docs/AGENTS.md) for the full multi-agent architecture.
+**Multi-fleet comparison (v0.3).** `palaestrai_socal/experiment_eaton_local_ab.yml`
+runs the same fine-grid scenario **three times in one store** with identical seed
+(47): `phase_0_no_ff` (`n_planes:0`, baseline), `phase_1_with_ff` (`n_planes:3`,
+small fleet) and `phase_2_with_ff7` (`n_planes:7`, large fleet). Phases run
+sequentially, so peak memory equals a single-phase run (~5 GB). The reader is
+phase-aware (`read_run(..., phase_uid="phase_2_with_ff7")`, plus `list_phases`),
+and surfaces new grid metrics per step (`vmin_pu`/`vmean_pu`, `intertie_mw`,
+`load_mw`).
+
+```bash
+# run the 3-phase experiment (heavy; ~5 GB peak, phases run sequentially)
+env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
+  palaestrai_socal/experiment_eaton_local_ab.yml
+
+# N-row comparison timelapse (one map row per phase + fading plane icons)
+python analysis/make_comparison_timelapse.py \
+  --store <store-uri> \
+  --phases phase_0_no_ff:0,phase_1_with_ff:3,phase_2_with_ff7:7 \
+  --stride 1 --fps 10 --outdir analysis
+# N-way static grid-metrics PNG (SAIDI, voltage, power, intertie)
+python analysis/grid_metrics_report.py \
+  --store <store-uri> \
+  --phases phase_0_no_ff:0,phase_1_with_ff:3,phase_2_with_ff7:7 \
+  --out analysis/grid_metrics_ab.png
+```
+
+The `--phases` value is a comma list of `phase_uid` or `phase_uid:n_planes`; the
+legacy 2-phase `--phase-a/--phase-b` flags still work. **Result:** sweeping
+0 → 3 → 7 tankers saves 0 → 137 → **294 acres** versus baseline (~1.6 %) and gives
+the largest SAIDI reduction at 7 planes (1.98 → 1.84) — scripted aerial
+firefighting delays and constrains the front, so more aircraft compound the
+firebreak effect.
+
+> `intertie_mw` is a real sum of stored `*-line-*.p_from_mw` flows when present,
+> else a clearly-labelled served-load proxy (`meta["intertie_is_proxy"]`).
+
+See [`docs/AGENTS.md`](docs/AGENTS.md) for the full multi-agent architecture and
+[`docs/v0.3_RELEASE.md`](docs/v0.3_RELEASE.md) / [`CHANGELOG.md`](CHANGELOG.md)
+for release notes.
 
 ### 4. Five-day analysis
 

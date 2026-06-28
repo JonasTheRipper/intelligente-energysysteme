@@ -85,6 +85,36 @@ def _suffix(uid: str) -> str:
     return uid.split(".", 1)[1] if "." in uid else uid
 
 
+def list_phases(store_uri: str) -> List[dict]:
+    """List the palaestrAI phases present in a store, in run order.
+
+    Returns ``[{"number": int, "uid": str}, ...]`` sorted by ``number``. A
+    single-phase v0.2 run yields one entry; the v0.3 A/B run yields two
+    (``phase_0_no_ff`` then ``phase_1_with_ff``). Callers use this to discover
+    the phase uids/indices to pass to :func:`read_run`.
+
+    palaestrAI maps a stored ``world_states`` row to its phase via
+    ``environments.experiment_run_phase_id -> experiment_run_phases`` (see
+    ``palaestrai/store/database_model.py``); this is a plain SQL join, so no
+    palaestrai import is required.
+    """
+    con, _ph = _connect(store_uri)
+    try:
+        cur = con.cursor()
+        # Only phases that actually have stored world_states rows.
+        cur.execute(
+            "SELECT DISTINCT p.number, p.uid "
+            "FROM experiment_run_phases p "
+            "JOIN environments e ON e.experiment_run_phase_id = p.id "
+            "JOIN world_states ws ON ws.environment_id = e.id "
+            "ORDER BY p.number"
+        )
+        rows = cur.fetchall()
+    finally:
+        con.close()
+    return [{"number": int(n), "uid": str(u)} for (n, u) in rows]
+
+
 def _sensors_by_suffix(state_dump) -> Dict[str, np.ndarray]:
     """Decode a ``world_states.state_dump`` into ``{sensor_suffix: ndarray}``.
 
@@ -108,20 +138,77 @@ def _sensors_by_suffix(state_dump) -> Dict[str, np.ndarray]:
     return out
 
 
-def _fetch_env_rows(con, env_uid: str, ph: str = "?"
-                    ) -> List[Tuple[int, str]]:
+def _fetch_env_rows(
+    con,
+    env_uid: str,
+    ph: str = "?",
+    phase_uid: Optional[str] = None,
+    phase_index: Optional[int] = None,
+) -> List[Tuple[int, str]]:
     """Return ``[(id, state_dump), ...]`` for one environment, in step order.
 
     ``ph`` is the driver placeholder (``?`` sqlite, ``%s`` psycopg2).
+
+    When ``phase_uid`` or ``phase_index`` is given, the rows are restricted to
+    that single palaestrAI phase by joining
+    ``environments.experiment_run_phase_id -> experiment_run_phases`` and
+    filtering on ``experiment_run_phases.uid`` (``phase_uid``) or
+    ``experiment_run_phases.number`` (``phase_index``). With neither set the
+    behaviour is unchanged -- every row for ``env_uid`` across all phases (a
+    single-phase v0.2 run has exactly one), preserving back-compat.
     """
+    params: List = [env_uid]
+    join = ""
+    where = f"e.uid = {ph}"
+    if phase_uid is not None or phase_index is not None:
+        join = "JOIN experiment_run_phases p ON p.id = e.experiment_run_phase_id "
+        if phase_uid is not None:
+            where += f" AND p.uid = {ph}"
+            params.append(phase_uid)
+        else:
+            where += f" AND p.number = {ph}"
+            params.append(int(phase_index))
     q = (
         "SELECT ws.id, ws.state_dump FROM world_states ws "
         "JOIN environments e ON e.id = ws.environment_id "
-        f"WHERE e.uid = {ph} ORDER BY ws.simtime_ticks, ws.id"
+        f"{join}"
+        f"WHERE {where} ORDER BY ws.simtime_ticks, ws.id"
     )
     cur = con.cursor()
-    cur.execute(q, (env_uid,))
+    cur.execute(q, tuple(params))
     return list(cur.fetchall())
+
+
+def _bus_voltages(sensors: Dict[str, np.ndarray]) -> np.ndarray:
+    """Collect every per-bus ``*-bus-*.vm_pu`` scalar this step -> 1-D array."""
+    vals: List[float] = []
+    for uid, v in sensors.items():
+        if uid.endswith(".vm_pu") and "-bus-" in uid:
+            try:
+                vals.append(float(np.asarray(v).ravel()[0]))
+            except (IndexError, ValueError):
+                pass
+    return np.asarray(vals, dtype=np.float64)
+
+
+def _line_flow_mw(sensors: Dict[str, np.ndarray]) -> Optional[float]:
+    """Sum |p_from_mw| over every ``*-line-*`` sensor -> real intertie metric.
+
+    Returns ``None`` when the run stored no line-flow sensors (then the caller
+    falls back to a documented proxy). When present this is the total real-power
+    throughput on the modelled lines; for this load-pocket scenario it tracks
+    the power imported across the network to serve local load.
+    """
+    found = False
+    total = 0.0
+    for uid, v in sensors.items():
+        if "-line-" in uid and uid.endswith(".p_from_mw"):
+            try:
+                total += abs(float(np.asarray(v).ravel()[0]))
+                found = True
+            except (IndexError, ValueError):
+                pass
+    return total if found else None
 
 
 def _grid_served_mw(sensors: Dict[str, np.ndarray]) -> float:
@@ -141,21 +228,46 @@ def read_run(
     gis_uid: str = "gis_world",
     grid_uid: str = "socal_grid",
     env_step_min: float = 60.0,
+    phase_uid: Optional[str] = None,
+    phase_index: Optional[int] = None,
 ) -> Tuple[List[dict], dict]:
     """Reconstruct ``(snaps, meta)`` for ``render()`` from the store.
 
     ``snaps`` and ``meta`` match the structures produced by
     :func:`analysis.make_timelapse.capture`, so the v0.1 ``render()`` consumes
     them unchanged.
+
+    Phase selection
+    ---------------
+    A single store may hold MORE than one palaestrAI phase (the v0.3 A/B run
+    writes ``phase_0_no_ff`` and ``phase_1_with_ff`` to one DB). Pass
+    ``phase_uid`` (e.g. ``"phase_0_no_ff"``) or ``phase_index`` (0/1) to read a
+    SINGLE phase. With neither set, behaviour is unchanged: every row for the
+    env across all phases (a v0.2 single-phase run has exactly one), so existing
+    callers (``firefighter_report.py``, the v0.2 timelapse) keep working. Use
+    :func:`list_phases` to discover the phases present.
+
+    New grid metrics (per snap)
+    ---------------------------
+    * ``vmin_pu`` / ``vmean_pu`` -- min & mean across every stored
+      ``*-bus-*.vm_pu`` sensor that step (NaN if none stored).
+    * ``intertie_mw`` -- sum of ``|p_from_mw|`` over stored ``*-line-*`` sensors
+      when present (a REAL flow metric); otherwise a documented proxy equal to
+      the served load MW (power imported to serve local load). ``meta`` carries
+      ``intertie_is_proxy: bool`` so plots can label it honestly.
     """
     con, ph = _connect(store_uri)
     try:
-        gis_rows = _fetch_env_rows(con, gis_uid, ph)
-        grid_rows = _fetch_env_rows(con, grid_uid, ph)
+        gis_rows = _fetch_env_rows(con, gis_uid, ph, phase_uid, phase_index)
+        grid_rows = _fetch_env_rows(con, grid_uid, ph, phase_uid, phase_index)
     finally:
         con.close()
     if not gis_rows:
-        raise ValueError(f"no world_states for environment uid={gis_uid!r}")
+        raise ValueError(
+            f"no world_states for environment uid={gis_uid!r}"
+            + (f" phase_uid={phase_uid!r}" if phase_uid is not None else "")
+            + (f" phase_index={phase_index!r}" if phase_index is not None else "")
+        )
 
     # --- static geometry from the first gis_world row ---------------------
     first = _sensors_by_suffix(gis_rows[0][1])
@@ -167,12 +279,26 @@ def read_run(
     minlon, minlat, maxlon, maxlat = bounds
     extent = [minlon, maxlon, minlat, maxlat]
 
-    # --- per-step served MW from the grid env (if present) ----------------
+    # --- per-step grid metrics from the grid env (if present) -------------
     served_by_step: List[float] = []
+    vmin_by_step: List[float] = []
+    vmean_by_step: List[float] = []
+    lineflow_by_step: List[Optional[float]] = []
     for (_id, dump) in grid_rows:
-        served_by_step.append(_grid_served_mw(_sensors_by_suffix(dump)))
+        gsen = _sensors_by_suffix(dump)
+        served_by_step.append(_grid_served_mw(gsen))
+        volts = _bus_voltages(gsen)
+        if volts.size:
+            vmin_by_step.append(float(volts.min()))
+            vmean_by_step.append(float(volts.mean()))
+        else:
+            vmin_by_step.append(float("nan"))
+            vmean_by_step.append(float("nan"))
+        lineflow_by_step.append(_line_flow_mw(gsen))
     base_served = served_by_step[0] if served_by_step else 0.0
     total_customers = max(1.0, base_served) * CUSTOMERS_PER_MW
+    # Real line-flow intertie iff ANY grid step stored line sensors; else proxy.
+    intertie_is_proxy = not any(x is not None for x in lineflow_by_step)
 
     # --- per-step spatial frames + derived KPIs ---------------------------
     snaps: List[dict] = []
@@ -195,6 +321,13 @@ def read_run(
         cum_customer_min += cust_disc * env_step_min
         saidi = cum_customer_min / total_customers if total_customers > 0 else 0.0
 
+        vmin_pu = vmin_by_step[i] if i < len(vmin_by_step) else float("nan")
+        vmean_pu = vmean_by_step[i] if i < len(vmean_by_step) else float("nan")
+        raw_flow = lineflow_by_step[i] if i < len(lineflow_by_step) else None
+        # Real line-flow when stored; else documented proxy = served load MW
+        # (power imported across the network to serve the still-energised load).
+        intertie_mw = served if raw_flow is None else raw_flow
+
         step = i + 1
         snaps.append({
             "step": step,
@@ -206,11 +339,17 @@ def read_run(
             "wind_speed": wind_speed,
             "saidi": saidi,
             "served_mw": served,
+            # alias for callers that prefer the "consumed/served load" name.
+            "load_mw": served,
             "failed_bus_n": 0,
             "failed_line_n": 0,
             "cust_disc": cust_disc,
             # v0.3: active retardant-line cells this step (0 for v0.2 runs).
             "suppressed_n": suppressed_n,
+            # v0.3 grid metrics for the comparison plots.
+            "vmin_pu": vmin_pu,
+            "vmean_pu": vmean_pu,
+            "intertie_mw": intertie_mw,
         })
 
     meta = {
@@ -221,5 +360,8 @@ def read_run(
         "delta_m": delta_m,
         "all_lines": {},          # line geo not stored; left panel needs none
         "base_served": base_served,
+        # True when intertie_mw is the served-load proxy (no line sensors
+        # stored); False when it is a real summed line-flow metric.
+        "intertie_is_proxy": intertie_is_proxy,
     }
     return snaps, meta

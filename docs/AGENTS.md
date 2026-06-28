@@ -123,6 +123,42 @@ around the Eaton Canyon ignition at moderate (8 m/s) wind, where sweeping
 `n_planes ∈ {0,1,3,5,7}` measurably reduces burned acres
 (`analysis/firefighter_report.py`).
 
+## v0.3 A/B experiment + comparison analysis
+
+`palaestrai_socal/experiment_eaton_local_ab.yml` runs the fine-grid Eaton
+scenario **twice in one experiment / one store**, identical seed (47) and
+identical bounds/raster/wind (8 m/s)/`max_steps` (60) — the only difference is
+the firefighter knob:
+
+| phase | uid | `n_planes` |
+|-------|-----|-----------|
+| A | `phase_0_no_ff` | 0 (pure v0.2 baseline, zero suppression) |
+| B | `phase_1_with_ff` | 3 (lays a retardant line) |
+
+palaestrAI tags each `world_states` row with its phase via
+`environments.experiment_run_phase_id → experiment_run_phases.uid/.number`.
+`analysis/store_readers.read_run` accepts `phase_uid=` / `phase_index=` to read a
+**single** phase (omitting both keeps the v0.2 back-compat behaviour, i.e. all
+rows for the env); `analysis/store_readers.list_phases` lists the phases present.
+
+The A/B grid env keeps more sensors than the single-phase file (`*-bus-*.vm_pu`,
+`*-line-*.p_from_mw`) so the reader can surface new per-step snap keys:
+`vmin_pu` / `vmean_pu` (min & mean bus voltage p.u.), `intertie_mw`, and a
+`load_mw` alias. `intertie_mw` is a **real** sum of `|p_from_mw|` over stored
+line sensors when present; otherwise it falls back to a documented **proxy**
+(equal to served-load import) and `meta["intertie_is_proxy"]` is `True`.
+
+Two store-only renderers consume both phases:
+- `analysis/make_comparison_timelapse.py` — a 2-row map timelapse (top = phase A
+  no-FF, bottom = phase B with-FF, time-synced by frame index), with **fading
+  aero-tanker plane icons** on the bottom map derived from the per-step
+  SUPPRESSED cell-set diff (firefighter telemetry is on the muscle channel, not
+  stored, so plane positions come from `gis.cell_state`; see
+  `analysis/plane_icons.py`), plus a right-hand column of A-vs-B metric axes
+  (cumulative SAIDI, min/mean voltage, served MW, intertie MW). GIF + MP4.
+- `analysis/grid_metrics_report.py` — the static multi-panel PNG companion,
+  annotating final deltas (acres saved, SAIDI reduction, MW preserved).
+
 ## Overseer-Adversary (interface-only, NOT implemented)
 
 The GUARDIAN framing has an Overseer-Adversary that chooses the hazard
