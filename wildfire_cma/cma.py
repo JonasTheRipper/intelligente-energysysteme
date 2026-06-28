@@ -48,6 +48,10 @@ import numpy as np
 UNBURNED = 0
 BURNING = 1
 BURNED_OUT = 2
+# SUPPRESSED (3) is written by the v0.3 FirefighterAgent (retardant line). The
+# spread step treats it as a non-ignitable firebreak. Defined here so the core
+# stays import-light; mirrors palaestrai_socal.spaces.SUPPRESSED.
+SUPPRESSED = 3
 
 # --- Anderson/Scott-Burgan style no-wind/no-slope base ROS [m/min] --------
 # Keyed by a coarse fuel class id. These are representative baseline rates of
@@ -298,6 +302,15 @@ class WildfireCMA:
             for (dr, dc, diag) in _MOORE:
                 nr, nc = r + dr, c + dc
                 if not (0 <= nr < nrows and 0 <= nc < ncols):
+                    continue
+                # Only UNBURNED neighbours can ignite. This already excludes
+                # SUPPRESSED (3) cells, so a firefighter's retardant line is a
+                # non-ignitable firebreak (v0.3). The explicit SUPPRESSED guard
+                # below is documentary -- it is reached only when SUPPRESSED
+                # cells exist, so with none present the spread is bit-for-bit
+                # identical to v0.2 (the neighbour is UNBURNED either way and no
+                # extra RNG is drawn). See tests/test_suppression_block.py.
+                if state[nr, nc] == SUPPRESSED:
                     continue
                 if state[nr, nc] != UNBURNED:
                     continue

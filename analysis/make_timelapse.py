@@ -157,12 +157,15 @@ def render(snaps, meta, outdir=None, stride=1, fps=12, title=None):
     fail_lc = LineCollection([], colors="#d10000", linewidths=1.3,
                              alpha=0.95, zorder=4)
     axm.add_collection(fail_lc)
-    # fire raster (updated each frame): 0 transparent, 1 burning, 2 burned-out.
+    # fire raster (updated each frame): 0 transparent, 1 burning, 2 burned-out,
+    # 3 SUPPRESSED (v0.3 retardant line, tinted retardant-pink). Code 3 never
+    # occurs in a v0.2 run, so the burn-scar render is byte-identical there.
     # Semi-transparent burn scar so the underlying terrain stays visible and
     # you can judge whether the spread follows ridges/valleys.
     fire_cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.33, 0.0, 0.92),
-                                (0.18, 0.18, 0.18, 0.62)])
-    fire_norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], fire_cmap.N)
+                                (0.18, 0.18, 0.18, 0.62),
+                                (0.96, 0.36, 0.55, 0.90)])
+    fire_norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], fire_cmap.N)
     fire_im = axm.imshow(np.zeros((2, 2), dtype=np.int8), cmap=fire_cmap,
                          norm=fire_norm, origin="upper", extent=extent,
                          zorder=3, interpolation="nearest")
@@ -191,6 +194,7 @@ def render(snaps, meta, outdir=None, stride=1, fps=12, title=None):
     legend_handles = [
         Patch(facecolor="#ff5400", label="Active fire (burning)"),
         Patch(facecolor="#4d4d4d", label="Burned out"),
+        Patch(facecolor="#f55c8c", label="Retardant line (suppressed)"),
         Line2D([0], [0], color="#d10000", lw=2.0, label="Failed line"),
         Line2D([0], [0], color="#33373b", lw=1.0, label="Healthy line"),
         Line2D([0], [0], color="#5a4a36", lw=0.8, alpha=0.6,
@@ -241,11 +245,16 @@ def render(snaps, meta, outdir=None, stride=1, fps=12, title=None):
         fail_segs = [all_lines[ln] for ln in fl if ln in all_lines]
         fail_segs = [np.asarray(x) for x in fail_segs]
         fail_lc.set_segments(fail_segs)
-        # clock
-        clock_txt.set_text(
-            f"Day {s['day']:.2f}  (h{int(s['hour'])})\n"
-            f"Wind {s['wind_speed']:.0f} m/s"
-        )
+        # clock (+ a v0.3 retardant HUD line only when a line is active, so a
+        # v0.2 run with no firefighter shows the exact same annotation as before)
+        clock = (f"Day {s['day']:.2f}  (h{int(s['hour'])})\n"
+                 f"Wind {s['wind_speed']:.0f} m/s")
+        supp_n = int(s.get("suppressed_n", 0))
+        if supp_n > 0:
+            grounded = s["wind_speed"] >= 18.0
+            clock += (f"\nRetardant: {supp_n:,} cells"
+                      f"{'  (FLEET GROUNDED)' if grounded else ''}")
+        clock_txt.set_text(clock)
         # SAIDI curve progressive
         upto = fi + 1
         saidi_line.set_data(days_all[:upto], saidi_all[:upto])

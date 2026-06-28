@@ -46,6 +46,59 @@ LAYER_FLOOD = 2
 VALID_STATES = (UNBURNED, BURNING, BURNED_OUT, SUPPRESSED, FLOODED)
 VALID_LAYERS = (LAYER_FIRE, LAYER_SUPPRESSION, LAYER_FLOOD)
 
+# -- deterministic mutation arbitration priority (higher wins) ---------------
+# When several agents (fire, firefighter, future flood) propose a state for the
+# SAME cell in one env step, the cell is resolved by this fixed priority instead
+# of last-writer-wins, so the outcome is independent of agent turn order:
+#     BURNED_OUT (terminal) > SUPPRESSED > FLOODED > BURNING > UNBURNED.
+# This realises the v0.3 design's "suppression > spread" rule (a retardant line
+# a firefighter lays this step cannot be overwritten BURNING the same step) and
+# keeps BURNED_OUT monotonic. Values are distinct so ties never occur.
+STATE_PRIORITY: Dict[int, int] = {
+    UNBURNED: 0,
+    BURNING: 1,
+    FLOODED: 2,
+    SUPPRESSED: 3,
+    BURNED_OUT: 4,
+}
+
+
+def arbitrate_mutations(
+    state: np.ndarray,
+    mutations: Sequence[Tuple[int, int, int, int]],
+) -> np.ndarray:
+    """Resolve ``(row, col, state, layer)`` edits against ``state`` by priority.
+
+    Returns a NEW int8 grid (``state`` is not mutated). The result is
+    deterministic and independent of the order ``mutations`` are given in:
+
+    * out-of-bounds cells and invalid state codes are dropped (matching the v0.2
+      ``_apply_mutations`` validity check);
+    * when multiple mutations target the same cell, the one with the highest
+      :data:`STATE_PRIORITY` wins (``SUPPRESSED`` beats ``BURNING`` -> a
+      firefighter line holds against same-step spread);
+    * a cell already ``BURNED_OUT`` is terminal and never overwritten.
+
+    Numpy-only (no palaestrai), so it is unit-testable in the light CI stage.
+    """
+    S = np.array(state, dtype=np.int8, copy=True)
+    nr, nc = S.shape
+    winners: Dict[Tuple[int, int], int] = {}
+    for (r, c, st, _layer) in mutations:
+        r, c, st = int(r), int(c), int(st)
+        if not (0 <= r < nr and 0 <= c < nc):
+            continue
+        if st not in VALID_STATES:
+            continue
+        cur = winners.get((r, c))
+        if cur is None or STATE_PRIORITY[st] > STATE_PRIORITY[cur]:
+            winners[(r, c)] = st
+    for (r, c), st in winners.items():
+        if int(S[r, c]) == BURNED_OUT:   # terminal; never overwritten
+            continue
+        S[r, c] = np.int8(st)
+    return S
+
 # Padded-set capacity: one Santa-Ana hour on the 600x760 raster ignites far
 # fewer than this many *new* cells, so CAP=8192 never truncates in practice.
 CAP = 8192

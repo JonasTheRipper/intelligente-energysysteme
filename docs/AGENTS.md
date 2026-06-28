@@ -49,7 +49,13 @@ unit-testable without palaestrai or pandapower.
 | Agent | Muscle | Reads | Writes | Core (numpy-only) |
 |-------|--------|-------|--------|-------------------|
 | `wildfire` | `agents.wildfire_agent:WildfireCmaMuscle` | `gis.*` (shape, bounds, fuel, dem, cell_state, wind) | `gis.cell_mutations` (BURNING) | `agents.wildfire_core:WildfireDriver` |
+| `firefighter` (v0.3) | `agents.firefighter_agent:FirefighterMuscle` | `gis.cell_state`, `gis.fuel_class` (+ optional `gis.wind_field`) | `gis.cell_mutations` (SUPPRESSED / LAYER_SUPPRESSION) | `agents.firefighter_core` |
 | `damage_mapper` | `agents.damage_agent:DamageMapperMuscle` | `gis.grid_shape`, `gis.bounds`, `gis.cell_state` | `...load-<bus>-<idx>.p_mw` (→ 0) | `agents.damage_core:DamageMapperDriver` |
+
+Turn order is `wildfire → firefighter → damage_mapper`: the firefighter reads the
+same-step fire field and lays a retardant line ahead of the head, and the GIS env
+resolves the two `gis.cell_mutations` writers by fixed priority (below), so the
+outcome is independent of turn order.
 
 ### Ignition is an agent parameter, not an environment action
 The wildfire `ignition_points` (a list of `[lon, lat]`) and `ignition_step` are
@@ -67,23 +73,55 @@ de-energisation as a **load-shed trip**: it sets the `p_mw` actuator of every
 load on a fire-affected bus to `0`. This reproduces the served-load shortfall
 KPI within the native MIDAS actuator set. (See `agents/damage_core.py`.)
 
-## Firefighter interface (exposed, NOT implemented)
+## Firefighter agent (v0.3 — IMPLEMENTED)
 
-Per scope there is **no FirefighterAgent**. The substrate only guarantees the
-read/write surface a future firefighter would bind to, verified by
-`tests/test_gis_world_env.py::test_firefighter_interface_contract`:
+v0.3 ships the first responder, `FirefighterMuscle`
+(`agents/firefighter_agent.py`), a fleet of `n_planes` Large Air Tankers that
+lay long-term retardant ahead of the fire head. It binds to exactly the surface
+the v0.2 substrate reserved:
 
-* **Sensors:** `gis.cell_state`, `gis.front_cells`, `gis.wind_field`,
-  `gis.fuel_class`, `gis.bounds`, `gis.grid_shape`, `gis.cell_size_m`.
-* **Actuator:** `gis.cell_mutations` accepts a `SUPPRESSED` state written on the
-  dedicated `LAYER_SUPPRESSION` layer, so a firefighter's edits are
-  distinguishable from the fire's (`palaestrai_socal.spaces` reserves
-  `SUPPRESSED=3` / `FLOODED=4` and `LAYER_SUPPRESSION=1` / `LAYER_FLOOD=2`).
+* **Sensors:** `gis.cell_state`, `gis.fuel_class` (both length `N=nrows*ncols`,
+  so they satisfy palaestrAI's flat-equal-length per-agent memory); wind comes
+  from a `wind_speed`/`wind_dir_deg` param fallback matching the env config (the
+  same pattern the wildfire muscle uses), or the live `gis.wind_field` sensor
+  when subscribed.
+* **Actuator:** `gis.cell_mutations` — it writes `(row, col, SUPPRESSED,
+  LAYER_SUPPRESSION)` edits (`palaestrai_socal.spaces` reserves `SUPPRESSED=3`,
+  `LAYER_SUPPRESSION=1`).
 
-A firefighter would subscribe to the fire front + wind, decide where to
-suppress, and write `(row, col, SUPPRESSED, LAYER_SUPPRESSION)` mutations. The
-fire CA never re-ignites a `SUPPRESSED` cell and never spreads *from* one (it is
-not `BURNING`) — see `tests/test_wildfire_agent.py::test_suppressed_cells_do_not_spread`.
+**One operational knob, `n_planes`.** Every other quantity is a documented
+constant in `agents/firefighter_core.py` (real aero-tanker data): productivity
+(`DROPS_PER_PLANE_PER_HOUR`, `LINE_KM_PER_DROP`), the wind grounding/degrade
+curve (`DEGRADE_WIND_MS=13`, `GROUND_WIND_MS=18`), and retardant-line lifetime
+(`SUPPRESS_PERSIST_STEPS=12`). The pipeline is `n_planes + wind → retardant
+budget (cells) → downwind fire head → a contiguous SUPPRESSED line ahead of the
+head, preferring high fuel`. In wind `≥ GROUND_WIND_MS` the fleet is grounded,
+the budget is 0, and **no mutations are emitted** — which is why the Eaton 25 m/s
+high-wind run is unchanged vs v0.2.
+
+**Firebreak semantics.** The fire CA never re-ignites a `SUPPRESSED` cell and
+never spreads *from* one — see
+`tests/test_suppression_block.py`. With zero SUPPRESSED cells the spread step is
+bit-for-bit identical to v0.2 (proven against a no-guard reference transition in
+the same test).
+
+**Mutation arbitration (env-side).** Because both wildfire and firefighter write
+`gis.cell_mutations` in one step, `gis_world_env` resolves every cell by fixed
+priority via `spaces.arbitrate_mutations`:
+`BURNED_OUT (terminal) > SUPPRESSED > FLOODED > BURNING > UNBURNED`. This makes a
+retardant line laid this step hold against same-step spread and the result
+independent of agent turn order (`tests/test_arbitration.py`). The env also owns
+a per-cell `_suppress_age` timer that reverts a line to `UNBURNED` after
+`SUPPRESS_PERSIST_STEPS` env steps (retardant breakdown), exactly as it owns the
+fire's burn timer.
+
+**Scenarios.** On the statewide 600×760 grid one cell is ~947 m, so a realistic
+retardant line is sub-cell and the budget rounds to ~0; the Eaton high-wind run
+(`experiment_eaton.yml`) keeps a firefighter block but is grounded. The
+operationally meaningful demo is `experiment_eaton_local.yml` — a ~50 m fine grid
+around the Eaton Canyon ignition at moderate (8 m/s) wind, where sweeping
+`n_planes ∈ {0,1,3,5,7}` measurably reduces burned acres
+(`analysis/firefighter_report.py`).
 
 ## Overseer-Adversary (interface-only, NOT implemented)
 

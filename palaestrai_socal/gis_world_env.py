@@ -54,6 +54,9 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from palaestrai_socal import spaces  # noqa: E402
+from palaestrai_socal.agents.firefighter_core import (  # noqa: E402
+    SUPPRESS_PERSIST_STEPS, age_suppressed,
+)
 from wildfire_cma.cma import BURNING, BURNED_OUT, UNBURNED  # noqa: E402
 from wildfire_cma.gis import (  # noqa: E402
     SOCAL_BOUNDS, synthetic_socal, socal_from_srtm,
@@ -89,6 +92,10 @@ class GisWorldEnvironment(Environment):
 
         self._raster = None
         self._state: Optional[np.ndarray] = None
+        # per-cell SUPPRESSED-line persistence timer (v0.3): how many consecutive
+        # env steps a cell has held retardant, used to age the line back to
+        # UNBURNED after SUPPRESS_PERSIST_STEPS (see firefighter_core.age_suppressed).
+        self._suppress_age: Optional[np.ndarray] = None
         self._wind: Tuple[float, float] = self.default_wind
         self._step = 0
 
@@ -175,6 +182,7 @@ class GisWorldEnvironment(Environment):
         LOG.info("starting GisWorldEnvironment %s", self.uid)
         self._raster = self._build_raster()
         self._state = np.full(self._raster.shape, UNBURNED, dtype=np.int8)
+        self._suppress_age = np.zeros(self._raster.shape, dtype=np.int16)
         self._wind = self.default_wind
         self._step = 0
         self.sensors = self._sensor_list()
@@ -191,16 +199,21 @@ class GisWorldEnvironment(Environment):
 
     # -- step --------------------------------------------------------------
     def _apply_mutations(self, actuators: List[ActuatorInformation]) -> int:
-        nr, nc = self._raster.shape
-        n_applied = 0
+        """Apply all agents' cell edits to ``S`` with deterministic arbitration.
+
+        v0.2 applied mutations last-writer-wins. v0.3 collects every proposed
+        ``gis.cell_mutations`` edit across all actuators (the fire and the
+        firefighter both write this actuator) and resolves each cell by fixed
+        priority (BURNED_OUT > SUPPRESSED > BURNING > UNBURNED) via
+        :func:`spaces.arbitrate_mutations`, so suppression holds against
+        same-step spread and the result is independent of agent turn order.
+        """
+        all_muts: List[Tuple[int, int, int, int]] = []
         for act in actuators or []:
             if act.uid.endswith("gis.cell_mutations") or act.uid == "gis.cell_mutations":
-                muts = spaces.decode_mutations(np.asarray(act.value).ravel(),
-                                               cap=spaces.CAP)
-                for (r, c, st, _layer) in muts:
-                    if 0 <= r < nr and 0 <= c < nc and st in spaces.VALID_STATES:
-                        self._state[r, c] = np.int8(st)
-                        n_applied += 1
+                all_muts.extend(
+                    spaces.decode_mutations(np.asarray(act.value).ravel(),
+                                            cap=spaces.CAP))
             elif act.uid.endswith("gis.wind_override") or act.uid == "gis.wind_override":
                 v = np.asarray(act.value, dtype=np.float64).ravel()
                 spd = float(v[0]) if v.size > 0 else -1.0
@@ -209,11 +222,19 @@ class GisWorldEnvironment(Environment):
                     self._wind = (spd, self._wind[1])
                 if ddeg >= 0.0:
                     self._wind = (self._wind[0], ddeg % 360.0)
+        new_state = spaces.arbitrate_mutations(self._state, all_muts)
+        n_applied = int(np.count_nonzero(new_state != self._state))
+        self._state = new_state
         return n_applied
 
     def update(self, actuators: List[ActuatorInformation]) -> EnvironmentState:
         self._step += 1
         self._apply_mutations(actuators)
+        # Age the firefighter's retardant lines: a cell SUPPRESSED for
+        # SUPPRESS_PERSIST_STEPS env steps reverts to UNBURNED (retardant
+        # breakdown). The env owns this timer, exactly as the fire agent owns
+        # the burn timer, so the reversion is recorded as ordinary state.
+        age_suppressed(self._state, self._suppress_age, SUPPRESS_PERSIST_STEPS)
         self.sensors = self._sensor_list()
 
         front_size = int((self._state == BURNING).sum())

@@ -38,6 +38,9 @@ import numpy as np
 
 # cell-state codes (mirror palaestrai_socal.spaces)
 UNBURNED, BURNING, BURNED_OUT = 0, 1, 2
+# v0.3 firefighter retardant line; surfaced as fire_code==3 so the timelapse can
+# tint it. Absent from any v0.2 run (no firefighter), so older runs are unchanged.
+SUPPRESSED = 3
 
 # same planning figure the v0.1 environment used to turn MW into customers.
 CUSTOMERS_PER_MW = 200.0
@@ -180,6 +183,9 @@ def read_run(
         fire_code = np.zeros((nr, nc), dtype=np.int8)
         fire_code[S == BURNING] = 1
         fire_code[S == BURNED_OUT] = 2
+        # v0.3: firefighter retardant lines (absent in v0.2 runs -> stays 0).
+        fire_code[S == SUPPRESSED] = 3
+        suppressed_n = int((S == SUPPRESSED).sum())
         wind = sm.get("gis.wind_field", np.array([0.0, 0.0]))
         wind_speed = float(np.asarray(wind).ravel()[0])
 
@@ -203,6 +209,8 @@ def read_run(
             "failed_bus_n": 0,
             "failed_line_n": 0,
             "cust_disc": cust_disc,
+            # v0.3: active retardant-line cells this step (0 for v0.2 runs).
+            "suppressed_n": suppressed_n,
         })
 
     meta = {

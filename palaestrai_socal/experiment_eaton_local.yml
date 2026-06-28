@@ -1,47 +1,46 @@
 # =============================================================================
-# EATON FIRE scenario (Jan 2025) -- second v0.2 validation run.
+# EATON FIRE -- LOCAL FINE-GRID scenario (v0.3 firefighter demonstration).
 #
-# Reuses the EXACT v0.2 machinery of experiment_multihazard.yml (real MIDAS/mosaik
-# powergrid + GisWorldEnvironment + WildfireCmaAgent + DamageMapperAgent +
-# grid_probe), changing ONLY the scenario inputs:
+# Same v0.2/v0.3 machinery as experiment_eaton.yml (real MIDAS/mosaik powergrid +
+# GisWorldEnvironment + WildfireCmaAgent + FirefighterAgent + DamageMapperAgent),
+# but on a SMALL, FINE raster around the Eaton Canyon ignition so the aero tanker
+# is operationally MEANINGFUL.
 #
-#   * ignition_points = [[-118.09358, 34.18604]]  -- the CPUC/SCE documented
-#       preliminary origin in Eaton Canyon, near the SCE M6T1 transmission tower
-#       (verified to land on burnable land: real SRTM rc=(397,320), dem~467 m,
-#       fuel class 3, 100% land neighbourhood).
-#   * start_date = 2025-01-08 02:18:00+0000  (= 2025-01-07 18:18 PST, the Santa
-#       Ana wind event onset). MIDAS start_date is UTC.
-#   * wind = strong Santa Ana blowing FROM the NE (wind_dir_deg=45 => blows TOWARD
-#       the SW, 225deg) downslope into the Altadena/foothill communities SW of the
-#       canyon; wind_speed bumped to 25 m/s for the high-wind event.
+# Why a separate scenario (design §3 caveat): on the statewide 600x760 grid one
+# cell is ~947 m, so a realistic ~0.6 km retardant line is sub-cell and the
+# budget rounds to 0 even in calm wind. Here a ~0.05 deg box around the ignition
+# at ~50 m cells (222 x 184) makes a multi-plane line span ~100+ cells, so the
+# firefighter visibly holds a line and increasing n_planes reduces burned acres.
 #
-# NO suppression agent: Eaton had near-zero effective early firefighting, which is
-# exactly why it validates the v0.2 no-suppression modelling honestly.
+# Wind is set to a MODERATE 8 m/s (below DEGRADE_WIND_MS=13) so wind_efficiency=1
+# and the fleet is NOT grounded -- the opposite end of the Eaton high-wind
+# baseline (experiment_eaton.yml), where 25 m/s grounds the fleet to zero drops.
 #
-# Same Postgres+TimescaleDB store + trimmed state_dump as the Santa-Ana baseline:
-#   env PYTHONPATH=$PWD palaestrai -c runtime_pg.conf.yaml start \
-#     palaestrai_socal/experiment_eaton.yml
+# Run (after user review; NOT auto-run by the coding session):
+#   env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
+#     palaestrai_socal/experiment_eaton_local.yml
 # =============================================================================
-uid: socal_v02_eaton
+uid: socal_v03_eaton_local
 seed: 47
 version: 3.5.9
 
 schedule:
-  - phase_0_eaton:
+  - phase_0_eaton_local:
       environments:
         - environment:
             name: palaestrai_socal.gis_world_env:GisWorldEnvironment
             uid: gis_world
             params:
-              raster_nrows: 600
-              raster_ncols: 760
+              # ~0.05 deg box around the Eaton Canyon origin [-118.09358, 34.18604];
+              # 222 x 184 cells over ~11 x 9 km -> ~50 m cells.
+              raster_nrows: 222
+              raster_ncols: 184
+              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
               use_real_dem: true
               env_step_min: 60.0
-              max_steps: 120
-              wind_speed: 25.0
+              max_steps: 60
+              wind_speed: 8.0
               wind_dir_deg: 45.0
-          # Trim the stored state_dump (disk fix): keep dynamic cell_state + wind +
-          # static scalars each step, the two big static grids only on row 0.
           state_transformer:
             name: palaestrai_socal.store_filters:StoreDumpTrimmer
             params:
@@ -59,12 +58,10 @@ schedule:
             uid: socal_grid
             params:
               step_size: 3600
-              max_steps: 120
-              end: 432000          # 120 steps x 3600 s
+              max_steps: 60
+              end: 216000          # 60 steps x 3600 s
               start_date: "2025-01-08 02:18:00+0000"
               silent: true
-          # Trim MIDAS dump: keep load p_mw (served-MW shortfall) + grid_probe
-          # health/vm sensors; drop the rest of the 2294-bus pandapower dump.
           state_transformer:
             name: palaestrai_socal.store_filters:StoreDumpTrimmer
             params:
@@ -89,10 +86,11 @@ schedule:
               t_burn_steps: 6
               kappa: 1.5
               dead_fuel_moisture: 0.05
-              wind_speed: 25.0
+              wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 600
-              raster_ncols: 760
+              raster_nrows: 222
+              raster_ncols: 184
+              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -103,12 +101,10 @@ schedule:
           actuators:
             - gis_world.gis.cell_mutations
 
-        # v0.3 aero tanker responder. Turn order is wildfire -> firefighter ->
-        # damage_mapper (firefighter reads the same-step fire field and lays a
-        # SUPPRESSED line ahead of the head). With the Eaton 25 m/s Santa-Ana
-        # wind the fleet is GROUNDED (>= GROUND_WIND_MS=18) -> wind_efficiency=0
-        # -> retardant_budget=0 -> zero mutations, so this high-wind baseline is
-        # unchanged vs v0.2 (the §2.1 "no effective firefighting" validation).
+        # v0.3 aero tanker. On THIS fine grid + moderate wind the fleet is NOT
+        # grounded, so n_planes drives a real retardant budget. Turn order:
+        # wildfire -> firefighter -> damage_mapper. Sweep n_planes in {0,1,3,5,7}
+        # with analysis/firefighter_report.py to measure acres saved vs baseline.
         - name: firefighter
           brain:
             name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
@@ -118,10 +114,11 @@ schedule:
             params:
               n_planes: 3
               env_step_min: 60.0
-              wind_speed: 25.0
+              wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 600
-              raster_ncols: 760
+              raster_nrows: 222
+              raster_ncols: 184
+              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -139,8 +136,9 @@ schedule:
             name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
             params:
               grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 600
-              raster_ncols: 760
+              raster_nrows: 222
+              raster_ncols: 184
+              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}

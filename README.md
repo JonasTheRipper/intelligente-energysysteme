@@ -248,6 +248,32 @@ rasters when `rasterio` is available.
 perimeters. Bring up a server with `docker-compose up` (PostGIS 16-3.4); the
 `gis-loader` service loads the synthetic raster + grid via `postgis_load.py`.
 
+### 3b. Firefighter Agent — aero tanker responder (v0.3)
+
+v0.3 adds the first **responder**: `palaestrai_socal/agents/firefighter_agent.py`
+(`FirefighterMuscle`), a scripted fleet of `n_planes` Large Air Tankers that lay
+a long-term retardant firebreak ahead of the fire head. It reads the same-step
+fire field (`gis.cell_state` + `gis.fuel_class`) and writes
+`(row, col, SUPPRESSED, LAYER_SUPPRESSION)` edits through the existing
+`gis.cell_mutations` actuator; the GIS env arbitrates the wildfire's and the
+firefighter's edits by fixed priority (`BURNED_OUT > SUPPRESSED > BURNING >
+UNBURNED`, turn-order independent) and ages a retardant line back to `UNBURNED`
+after `SUPPRESS_PERSIST_STEPS` steps.
+
+- **One knob, `n_planes`.** All productivity / wind constants live in
+  `agents/firefighter_core.py`. In wind `≥ 18 m/s` the fleet is **grounded**
+  (budget 0, zero edits) — so the Eaton 25 m/s high-wind run is unchanged.
+- **Firebreak is a true no-op when absent:** with zero SUPPRESSED cells the fire
+  CA is bit-for-bit identical to v0.2 (regression in
+  `tests/test_suppression_block.py`).
+- **Demo scenario:** `palaestrai_socal/experiment_eaton_local.yml` — a ~50 m fine
+  grid around the Eaton Canyon ignition at 8 m/s wind, where sweeping
+  `n_planes ∈ {0,1,3,5,7}` measurably reduces burned acres
+  (`python analysis/firefighter_report.py --run 0=... --run 3=...`). The
+  timelapse renders retardant lines in retardant-pink.
+
+See [`docs/AGENTS.md`](docs/AGENTS.md) for the full multi-agent architecture.
+
 ### 4. Five-day analysis
 
 `analysis/run_5day.py` drives the palaestrAI environment through a 120-hour
