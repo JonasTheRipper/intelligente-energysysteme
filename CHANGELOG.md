@@ -3,6 +3,54 @@
 All notable changes to the **SoCal Wildfires — Grid Co-Simulation** testbed.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [v0.4] — 2026-06-28
+
+**Full-blown firefighting** — the v0.3 aero-tanker responder becomes a deterministic,
+scripted multi-resource incident-command model (design steps 1–7; learning brain
+deliberately skipped). Full notes: [`docs/v0.4_RELEASE.md`](docs/v0.4_RELEASE.md);
+operational how-to: [`docs/RUNNING_THE_EXPERIMENT.md`](docs/RUNNING_THE_EXPERIMENT.md).
+
+### Added
+- **`firefighting/` package** (`palaestrai_socal/agents/firefighting/`): pure-numpy,
+  no palaestrAI dependency. `resources.py` (TankerFleet / HeloFleet / HandCrews /
+  Dozers / Engines, each with a documented-constant `capacity(...)`), `tactics.py`
+  (indirect/direct/containment/burnout/point_protect), `doctrine.py` (intensity-driven
+  direct-vs-indirect + anchor-and-flank), `planner.py` (`IncidentCommand.propose` +
+  `value_raster_from_buses`). The only operational knobs are resource **counts**.
+- **`CONTAINED` cell state (= 5)**: durable ground line / protected point, arbitrated
+  strictly between `SUPPRESSED` and `BURNED_OUT`; `STATE_PRIORITY` is total/tie-free;
+  CA non-ignitable guard mirrors `SUPPRESSED`; does not age out.
+- **Grid coupling / point protection**: engines protect grid-critical cells via a
+  value raster built from the DamageMapper bus→cell map (`protect_assets: true`);
+  graceful no-op without pandapower / grid JSON.
+- **4-phase experiment** `palaestrai_socal/experiment_eaton_firefighting.yml`
+  (`phase_0_no_ff`, `phase_1_air`, `phase_2_air_ground`, `phase_3_full_triage`).
+- **Comprehensive docs**: `docs/v0.4_RELEASE.md`, `docs/RUNNING_THE_EXPERIMENT.md`.
+- **+31 tests** (134 passing): `tests/test_firefighting_{resources,tactics,planner}.py`,
+  `tests/test_contained_state.py`.
+
+### Changed
+- **Telemetry fix**: the firefighter muscle returns `None` on the brain channel
+  (kills the v0.3 `dict + int` warning); telemetry lives on `self._last_telemetry`.
+- **Renderers**: per-tactic colours (retardant pink vs ground-line brown) and a
+  ground-line HUD in the timelapse; MW/SAIDI-preserved-per-resource-hour KPI in
+  `grid_metrics_report.build_figure_n`; both renderers now accept an optional
+  descriptive phase label via the extended, back-compatible `--phases`
+  `uid:n_planes:Label` grammar.
+- `palaestrai_socal/spaces.py`, `wildfire_cma/cma.py`, `analysis/store_readers.py`
+  updated for the `CONTAINED` state.
+
+### Results
+- Escalating the response saves 137 → 365 → **654 acres** vs baseline, but the
+  decisive effect is on the grid: the full-triage phase (point protection) holds
+  **SAIDI at 0.27** (vs ~1.97 baseline) and keeps ~20 MW more load energised — a far
+  larger grid benefit than acreage saved alone.
+
+### Preserved
+- **v0.3 identity** (tankers-only + indirect == `select_retardant_line`) and **v0.2
+  no-op identity** (zero budget == baseline, bit-for-bit) both still hold and are
+  test-guarded.
+
 ## [v0.3] — 2026-06-28
 
 First **responder agent** and multi-fleet comparison tooling.

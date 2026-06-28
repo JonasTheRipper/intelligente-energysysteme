@@ -96,7 +96,10 @@ def build_figure_n(phases, title=None):
         p["snaps"] = p["snaps"][:n]
         if "n_planes" not in p or p["n_planes"] is None:
             p["n_planes"] = _infer_planes(p.get("uid", ""))
-        p["label"] = _phase_short(p["n_planes"])
+        # honour a caller-supplied descriptive label (e.g. resource mix);
+        # fall back to the plane-count short label for back-compat.
+        if not p.get("label"):
+            p["label"] = _phase_short(p["n_planes"])
         p["acres"] = _burned_acres(p["snaps"], p["meta"])
 
     days = _arr(phases[0]["snaps"], "day")
@@ -140,21 +143,43 @@ def build_figure_n(phases, title=None):
 
     # banner: per-phase final burned acres + acres saved vs baseline
     base_acres = phases[0]["acres"]
+    base_mw = float(_arr(phases[0]["snaps"], "served_mw")[-1])
+    base_saidi = float(_arr(phases[0]["snaps"], "saidi")[-1])
+    # episode wall-clock hours (shared across phases; used to turn fleet counts
+    # into resource-hours for the headline cost-effectiveness KPI).
+    episode_hours = float(days[-1] * 24.0) if days.size else 0.0
     deltas = {}
     parts = []
     for i, p in enumerate(phases):
         saved = base_acres - p["acres"]
+        mw_final = float(_arr(p["snaps"], "served_mw")[-1])
+        saidi_final = float(_arr(p["snaps"], "saidi")[-1])
+        mw_preserved = mw_final - base_mw           # MW kept energised vs base
+        saidi_avoided = base_saidi - saidi_final    # SAIDI avoided vs base
+        # resource-hours: the only fleet count the store exposes per phase is
+        # the plane count, so we report MW/SAIDI preserved per tanker-hour (the
+        # headline cost-effectiveness figure). NaN for the zero-resource base.
+        res_hours = float(p["n_planes"]) * episode_hours
+        mw_per_rh = (mw_preserved / res_hours) if res_hours > 0 else float("nan")
+        saidi_per_rh = (saidi_avoided / res_hours) if res_hours > 0 \
+            else float("nan")
         deltas[p["label"]] = {
             "acres": p["acres"],
             "acres_saved_vs_baseline": saved,
-            "saidi_final": float(_arr(p["snaps"], "saidi")[-1]),
+            "saidi_final": saidi_final,
             "n_planes": p["n_planes"],
+            "mw_preserved_vs_baseline": mw_preserved,
+            "saidi_avoided_vs_baseline": saidi_avoided,
+            "resource_hours": res_hours,
+            "mw_preserved_per_resource_hour": mw_per_rh,
+            "saidi_avoided_per_resource_hour": saidi_per_rh,
         }
         if i == 0:
             parts.append(f"{p['label']}: {p['acres']:,.0f} ac (baseline)")
         else:
             parts.append(f"{p['label']}: {p['acres']:,.0f} ac "
-                         f"(saved {saved:,.0f})")
+                         f"(saved {saved:,.0f}; "
+                         f"{mw_per_rh:,.2f} MW/tanker-hr)")
     fig.text(0.5, 0.005, "Final burned area  —  " + "   |   ".join(parts),
              ha="center", fontsize=9.5, fontweight="bold")
     fig.tight_layout(rect=[0, 0.03, 1, 0.96])
@@ -276,15 +301,18 @@ def main():
             tok = tok.strip()
             if not tok:
                 continue
-            if ":" in tok:
-                uid, n_str = tok.rsplit(":", 1)
-                n_planes = int(n_str)
-            else:
-                uid, n_planes = tok, None
+            # token grammar: uid[:n_planes[:label]]  (label may contain spaces)
+            label = None
+            parts_tok = tok.split(":")
+            uid = parts_tok[0]
+            n_planes = int(parts_tok[1]) if len(parts_tok) > 1 and \
+                parts_tok[1].strip() else None
+            if len(parts_tok) > 2:
+                label = ":".join(parts_tok[2:]).strip() or None
             snaps, meta = read_run(args.store, gis_uid=args.gis_uid,
                                    grid_uid=args.grid_uid, phase_uid=uid)
             phases.append({"snaps": snaps, "meta": meta,
-                           "uid": uid, "n_planes": n_planes})
+                           "uid": uid, "n_planes": n_planes, "label": label})
         labels = [p.get("uid") for p in phases]
         print(f"[grid-metrics] {len(phases)} phases: {labels}")
         fig, deltas = build_figure_n(phases, title=args.title)

@@ -41,6 +41,8 @@ UNBURNED, BURNING, BURNED_OUT = 0, 1, 2
 # v0.3 firefighter retardant line; surfaced as fire_code==3 so the timelapse can
 # tint it. Absent from any v0.2 run (no firefighter), so older runs are unchanged.
 SUPPRESSED = 3
+# v0.4 ground containment line / point protection; surfaced as fire_code==5.
+CONTAINED = 5
 
 # same planning figure the v0.1 environment used to turn MW into customers.
 CUSTOMERS_PER_MW = 200.0
@@ -311,7 +313,12 @@ def read_run(
         fire_code[S == BURNED_OUT] = 2
         # v0.3: firefighter retardant lines (absent in v0.2 runs -> stays 0).
         fire_code[S == SUPPRESSED] = 3
+        # v0.4: CONTAINED ground line / point protection (code 5; absent in
+        # v0.2/v0.3 runs -> stays 0). Kept distinct so renderers colour
+        # air-retardant vs ground-containment tactics apart.
+        fire_code[S == CONTAINED] = 5
         suppressed_n = int((S == SUPPRESSED).sum())
+        contained_n = int((S == CONTAINED).sum())
         wind = sm.get("gis.wind_field", np.array([0.0, 0.0]))
         wind_speed = float(np.asarray(wind).ravel()[0])
 
@@ -346,6 +353,8 @@ def read_run(
             "cust_disc": cust_disc,
             # v0.3: active retardant-line cells this step (0 for v0.2 runs).
             "suppressed_n": suppressed_n,
+            # v0.4: active CONTAINED ground-line / protected-asset cells.
+            "contained_n": contained_n,
             # v0.3 grid metrics for the comparison plots.
             "vmin_pu": vmin_pu,
             "vmean_pu": vmean_pu,

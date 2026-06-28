@@ -52,6 +52,10 @@ BURNED_OUT = 2
 # spread step treats it as a non-ignitable firebreak. Defined here so the core
 # stays import-light; mirrors palaestrai_socal.spaces.SUPPRESSED.
 SUPPRESSED = 3
+# CONTAINED (5) is a completed v0.4 ground containment line (handline / dozer)
+# or a point-protected grid asset: like SUPPRESSED it is non-ignitable, but it
+# does not age out within the episode. Mirrors palaestrai_socal.spaces.CONTAINED.
+CONTAINED = 5
 
 # --- Anderson/Scott-Burgan style no-wind/no-slope base ROS [m/min] --------
 # Keyed by a coarse fuel class id. These are representative baseline rates of
@@ -311,6 +315,13 @@ class WildfireCMA:
                 # identical to v0.2 (the neighbour is UNBURNED either way and no
                 # extra RNG is drawn). See tests/test_suppression_block.py.
                 if state[nr, nc] == SUPPRESSED:
+                    continue
+                # CONTAINED ground lines / point-protected assets (v0.4) are
+                # likewise non-ignitable; the guard mirrors SUPPRESSED and, with
+                # no CONTAINED cell present, is never taken (UNBURNED check below
+                # already excludes it), so the no-suppression spread stays
+                # bit-for-bit identical to v0.2.
+                if state[nr, nc] == CONTAINED:
                     continue
                 if state[nr, nc] != UNBURNED:
                     continue

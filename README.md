@@ -312,6 +312,53 @@ See [`docs/AGENTS.md`](docs/AGENTS.md) for the full multi-agent architecture and
 [`docs/v0.3_RELEASE.md`](docs/v0.3_RELEASE.md) / [`CHANGELOG.md`](CHANGELOG.md)
 for release notes.
 
+### 3c. Full-blown firefighting — multi-resource incident command (v0.4)
+
+v0.4 turns the single-knob tanker agent into a **deterministic multi-resource
+incident-command** model. The agent muscle stays the only palaestrAI touch-point and
+delegates to a new pure-numpy `palaestrai_socal/agents/firefighting/` package
+(`resources` / `tactics` / `doctrine` / `planner`). The operational knobs are
+resource **counts** plus a doctrine string and a grid-triage switch:
+
+- `n_planes` (tankers), `n_helos`, `n_crews`, `n_dozers`, `n_engines`
+- `doctrine`: `auto` | `direct` | `indirect`
+- `protect_assets` (+ `grid_json`): engines protect grid-critical cells
+
+Ground line (crews/dozers) and protected points (engines) are durable, so they get a
+new **`CONTAINED`** cell state (5), arbitrated strictly between `SUPPRESSED` and the
+terminal `BURNED_OUT`. Two identities are preserved and test-guarded: tankers-only +
+indirect == v0.3 exactly, and zero budget == v0.2 baseline bit-for-bit.
+
+**4-phase experiment** `palaestrai_socal/experiment_eaton_firefighting.yml` (one
+store, seed 47): `phase_0_no_ff` → `phase_1_air` (3 tankers, == v0.3) →
+`phase_2_air_ground` (+4 crews +2 dozers) → `phase_3_full_triage` (+3 engines, point
+protection).
+
+```bash
+# run the 4-phase experiment (heavy; ~5 GB peak, phases sequential)
+setsid bash _outputs/run_full_pg.sh runtime_pg_eaton.conf.yaml \
+  palaestrai_socal/experiment_eaton_firefighting.yml v04_ff < /dev/null > /dev/null 2>&1 &
+
+# figures (the --phases grammar now accepts an optional descriptive label:
+#   uid:n_planes:Label  — ':' separates, NO commas inside a label)
+python analysis/make_comparison_timelapse.py --store <store-uri> --stride 1 --fps 10 \
+  --phases "phase_0_no_ff:0:No firefighting,phase_1_air:3:Air only,phase_2_air_ground:3:Air+ground,phase_3_full_triage:3:Full triage+protect"
+python analysis/grid_metrics_report.py --store <store-uri> --out analysis/grid_metrics_v04.png \
+  --phases "phase_0_no_ff:0:No firefighting,phase_1_air:3:Air only,phase_2_air_ground:3:Air+ground,phase_3_full_triage:3:Full triage+protect"
+```
+
+**Result:** escalating the response saves 137 → 365 → **654 acres** vs baseline, but
+the decisive effect is on the grid — the full-triage phase (point protection) holds
+**SAIDI at 0.27** (vs ~1.97 baseline) and keeps ~20 MW more load energised. A tactic
+that barely moves total burned area can still be decisive for grid resilience if it
+protects the right cells.
+
+**Read this before running or changing the experiment:**
+[`docs/RUNNING_THE_EXPERIMENT.md`](docs/RUNNING_THE_EXPERIMENT.md) (full how-to: run,
+modify knobs/phases/scenario, render, troubleshoot). Design rationale:
+[`docs/DESIGN_firefighting_actions.md`](docs/DESIGN_firefighting_actions.md); release
+summary: [`docs/v0.4_RELEASE.md`](docs/v0.4_RELEASE.md).
+
 ### 4. Five-day analysis
 
 `analysis/run_5day.py` drives the palaestrAI environment through a 120-hour

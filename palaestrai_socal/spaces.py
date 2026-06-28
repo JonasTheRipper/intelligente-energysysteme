@@ -31,35 +31,43 @@ from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
-# -- cell state codes (mirror wildfire_cma.cma; SUPPRESSED/FLOODED reserved) --
+# -- cell state codes (mirror wildfire_cma.cma) ------------------------------
 UNBURNED = 0
 BURNING = 1
 BURNED_OUT = 2
-SUPPRESSED = 3        # reserved for a future FirefighterAgent (exposed, unused)
+SUPPRESSED = 3        # retardant / wetline -- ages back to UNBURNED (v0.3)
 FLOODED = 4           # reserved for a future flood hazard (exposed, unused)
+CONTAINED = 5         # completed ground containment line (handline/dozer) or
+                      # point-protected grid asset; does NOT age out within an
+                      # episode and outranks SUPPRESSED (v0.4). See DESIGN §3.2.
 
 # -- mutation layers (which hazard wrote the cell) ---------------------------
 LAYER_FIRE = 0
 LAYER_SUPPRESSION = 1
 LAYER_FLOOD = 2
 
-VALID_STATES = (UNBURNED, BURNING, BURNED_OUT, SUPPRESSED, FLOODED)
+VALID_STATES = (UNBURNED, BURNING, BURNED_OUT, SUPPRESSED, FLOODED, CONTAINED)
 VALID_LAYERS = (LAYER_FIRE, LAYER_SUPPRESSION, LAYER_FLOOD)
 
 # -- deterministic mutation arbitration priority (higher wins) ---------------
 # When several agents (fire, firefighter, future flood) propose a state for the
 # SAME cell in one env step, the cell is resolved by this fixed priority instead
 # of last-writer-wins, so the outcome is independent of agent turn order:
-#     BURNED_OUT (terminal) > SUPPRESSED > FLOODED > BURNING > UNBURNED.
+#   BURNED_OUT (terminal) > CONTAINED > SUPPRESSED > FLOODED > BURNING > UNBURNED.
 # This realises the v0.3 design's "suppression > spread" rule (a retardant line
 # a firefighter lays this step cannot be overwritten BURNING the same step) and
-# keeps BURNED_OUT monotonic. Values are distinct so ties never occur.
+# keeps BURNED_OUT monotonic. v0.4 inserts CONTAINED *between* SUPPRESSED and
+# BURNED_OUT (DESIGN §3.2 "decide and document"): a completed ground line must
+# outrank a same-step BURNING edit AND an in-progress SUPPRESSED retardant edit,
+# but must never overwrite a terminal BURNED_OUT cell. BURNED_OUT is bumped to 5
+# to stay strictly highest. Values are distinct so ties never occur.
 STATE_PRIORITY: Dict[int, int] = {
     UNBURNED: 0,
     BURNING: 1,
     FLOODED: 2,
     SUPPRESSED: 3,
-    BURNED_OUT: 4,
+    CONTAINED: 4,
+    BURNED_OUT: 5,
 }
 
 

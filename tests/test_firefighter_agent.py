@@ -71,7 +71,10 @@ def _burning_front():
 def test_emits_suppressed_line_in_moderate_wind():
     from palaestrai_socal import spaces
     muscle = _muscle(n_planes=3, wind_speed=8.0)     # below DEGRADE -> full budget
-    acts, telem = muscle.propose_actions(_sensors(_burning_front()), [_actuator()])
+    acts, brain = muscle.propose_actions(_sensors(_burning_front()), [_actuator()])
+    # v0.4 telemetry fix: the brain/data channel is None (no more dict + int
+    # warning); telemetry lives on the muscle instance.
+    assert brain is None
     out = acts[0]
     # dtype-correct: the written value matches the actuator's own Box dtype.
     assert np.asarray(out.value).dtype == out.space.dtype
@@ -82,19 +85,22 @@ def test_emits_suppressed_line_in_moderate_wind():
         assert st == spaces.SUPPRESSED
         assert layer == spaces.LAYER_SUPPRESSION
         assert 0 <= r < NR and 0 <= c < NC
+    telem = muscle._last_telemetry
     assert telem["grounded"] == 0.0
-    assert telem["retardant_cells"] == float(len(muts))
+    assert telem["suppressed_cells"] == float(len(muts))
 
 
 @_needs_palaestrai
 def test_empty_mutations_when_grounded():
     from palaestrai_socal import spaces
     muscle = _muscle(n_planes=7, wind_speed=25.0)    # >= GROUND_WIND_MS -> grounded
-    acts, telem = muscle.propose_actions(_sensors(_burning_front()), [_actuator()])
+    acts, brain = muscle.propose_actions(_sensors(_burning_front()), [_actuator()])
+    assert brain is None                             # telemetry fix: non-dict channel
     muts = spaces.decode_mutations(np.asarray(acts[0].value).ravel(), cap=spaces.CAP)
     assert muts == []
+    telem = muscle._last_telemetry
     assert telem["grounded"] == 1.0
-    assert telem["retardant_cells"] == 0.0
+    assert telem["mutation_cells"] == 0.0
 
 
 @_needs_palaestrai

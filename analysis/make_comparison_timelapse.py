@@ -59,6 +59,8 @@ from analysis.plane_icons import plane_positions  # noqa: E402
 
 # SUPPRESSED retardant code surfaced by store_readers as fire_code==3.
 SUPPRESSED_CODE = 3
+# CONTAINED ground-line / point-protection code (v0.4), surfaced as fire_code==5.
+CONTAINED_CODE = 5
 # how many frames a plane icon lingers (fading) after it lays a drop.
 PLANE_FADE_FRAMES = 3
 
@@ -68,11 +70,19 @@ _PHASE_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e",
 
 
 def _fire_cmap():
-    """Same 4-colour fire colormap as make_timelapse (3 = retardant pink)."""
+    """Per-tactic fire colormap (v0.4).
+
+    Codes: 0 UNBURNED (transparent), 1 BURNING (orange), 2 BURNED_OUT (grey),
+    3 SUPPRESSED retardant/wetline (pink), 4 FLOODED (blue, reserved/unused),
+    5 CONTAINED ground line / point protection (dozer brown). The pink vs brown
+    split colours retardant-air vs ground-containment tactics apart.
+    """
     cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.33, 0.0, 0.92),
                            (0.18, 0.18, 0.18, 0.62),
-                           (0.96, 0.36, 0.55, 0.90)])
-    norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
+                           (0.96, 0.36, 0.55, 0.90),
+                           (0.20, 0.45, 0.85, 0.85),
+                           (0.55, 0.36, 0.18, 0.92)])
+    norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5], cmap.N)
     return cmap, norm
 
 
@@ -146,6 +156,17 @@ def _phase_label(n_planes):
 def _phase_short(n_planes):
     """Short legend tag for a phase."""
     return "no FF" if n_planes <= 0 else f"{n_planes} planes"
+
+
+def _disp_label(p):
+    """Descriptive display label for a phase, honouring a caller-supplied
+    ``label`` (e.g. resource mix); falls back to the plane-count label."""
+    return p.get("label") or _phase_label(p["n_planes"])
+
+
+def _disp_short(p):
+    """Short legend tag, honouring a caller-supplied ``label``."""
+    return p.get("label") or _phase_short(p["n_planes"])
 
 
 def render_comparison(
@@ -241,7 +262,7 @@ def render_comparison(
     hud_txts = []
     for i, p in enumerate(phases):
         ax = fig.add_subplot(gs[i * map_span:(i + 1) * map_span, 0])
-        lbl = _phase_label(p["n_planes"])
+        lbl = _disp_label(p)
         tag = "Baseline" if p["n_planes"] <= 0 else "Firefighters"
         fim = _draw_map(ax, p["meta"], f"{tag} — {lbl.upper()}")
         ax.set_ylabel("Latitude", fontsize=8)
@@ -269,10 +290,8 @@ def render_comparison(
     ax_mw = fig.add_subplot(gs[2 * met_span:3 * met_span, 1])
     ax_tie = fig.add_subplot(gs[3 * met_span:4 * met_span, 1])
 
-    planes_set = sorted({p["n_planes"] for p in phases})
     fig.suptitle(
-        title or "SoCal Eaton Fire — firefighter fleet comparison "
-        f"({' vs '.join(_phase_short(n) for n in planes_set)})",
+        title or "SoCal Eaton Fire — firefighter response comparison",
         fontsize=15, fontweight="bold", y=0.975)
 
     # --- metric axes scaffolding: one line per phase ----------------------
@@ -281,7 +300,7 @@ def render_comparison(
         all_vals = []
         for p in phases:
             (ln,) = ax.plot([], [], color=p["color"], lw=2.0,
-                            label=_phase_short(p["n_planes"]))
+                            label=_disp_short(p))
             lines.append(ln)
         srcs = ylim_keys or [key]
         for p in phases:
@@ -307,9 +326,9 @@ def render_comparison(
     vmin_lines, vmean_lines = [], []
     for p in phases:
         (lmin,) = ax_volt.plot([], [], color=p["color"], lw=1.5, ls="--",
-                               label=f"{_phase_short(p['n_planes'])} min")
+                               label=f"{_disp_short(p)} min")
         (lmean,) = ax_volt.plot([], [], color=p["color"], lw=2.0,
-                                label=f"{_phase_short(p['n_planes'])} mean")
+                                label=f"{_disp_short(p)} mean")
         vmin_lines.append(lmin)
         vmean_lines.append(lmean)
     vfin = np.concatenate([a[np.isfinite(a)] for p in phases
@@ -366,11 +385,18 @@ def render_comparison(
                     f"Wind {s['wind_speed']:.0f} m/s")
             else:
                 supp_n = int(s.get("suppressed_n", 0))
+                cont_n = int(s.get("contained_n", 0))
                 grounded = s["wind_speed"] >= 18.0
+                # surface both tactics: air retardant (SUPPRESSED) and ground
+                # containment line / point protection (CONTAINED). The ground
+                # line is only shown when present, so tankers-only phases read
+                # exactly as the v0.3 HUD did.
+                cont_line = f"\nGround line: {cont_n:,} cells" if cont_n else ""
                 hud_txts[pi].set_text(
                     f"Day {s['day']:.2f} (h{int(s['hour'])})\n"
                     f"Wind {s['wind_speed']:.0f} m/s\n"
                     f"Retardant: {supp_n:,} cells"
+                    f"{cont_line}"
                     f"{'  (GROUNDED)' if grounded else ''}")
             artists.append(hud_txts[pi])
 
@@ -425,22 +451,25 @@ def _parse_phase_spec(store, args):
             return int(m.group(1))
         return 3
 
+    # each spec is (uid, n_planes, label-or-None)
     specs = []
     if args.phases:
         for tok in args.phases.split(","):
             tok = tok.strip()
             if not tok:
                 continue
-            if ":" in tok:
-                uid, n = tok.split(":", 1)
-                specs.append((uid.strip(), int(n)))
-            else:
-                specs.append((tok, infer_planes(tok)))
+            # grammar: uid[:n_planes[:label]] (label may contain spaces)
+            parts = tok.split(":")
+            uid = parts[0].strip()
+            n = int(parts[1]) if len(parts) > 1 and parts[1].strip() \
+                else infer_planes(uid)
+            label = ":".join(parts[2:]).strip() if len(parts) > 2 else None
+            specs.append((uid, n, label or None))
         return specs
 
     legacy = [(args.phase_a, 0), (args.phase_b, args.n_planes),
               (getattr(args, "phase_c", None), getattr(args, "n_planes_c", 7))]
-    named = [(u, n) for (u, n) in legacy if u]
+    named = [(u, n, None) for (u, n) in legacy if u]
     if named:
         return named
 
@@ -449,7 +478,7 @@ def _parse_phase_spec(store, args):
     if len(phases) < 2:
         raise ValueError(
             f"store has {len(phases)} phase(s); need >=2. Found: {phases}")
-    return [(p["uid"], infer_planes(p["uid"])) for p in phases]
+    return [(p["uid"], infer_planes(p["uid"]), None) for p in phases]
 
 
 def main():
@@ -481,12 +510,13 @@ def main():
     args = ap.parse_args()
 
     specs = _parse_phase_spec(args.store, args)
-    print("[compare] phases:", ", ".join(f"{u}(n={n})" for u, n in specs))
+    print("[compare] phases:", ", ".join(f"{u}(n={n})" for u, n, _ in specs))
     phases = []
-    for uid, n in specs:
+    for uid, n, label in specs:
         snaps, meta = read_run(args.store, gis_uid=args.gis_uid,
                                grid_uid=args.grid_uid, phase_uid=uid)
-        phases.append({"snaps": snaps, "meta": meta, "n_planes": n, "uid": uid})
+        phases.append({"snaps": snaps, "meta": meta, "n_planes": n,
+                       "uid": uid, "label": label})
     render_comparison(phases, outdir=args.outdir, stride=args.stride,
                       fps=args.fps, title=args.title)
 
