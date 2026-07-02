@@ -114,16 +114,18 @@ def build_figure_n(phases, title=None):
         c = _PHASE_COLORS[i % len(_PHASE_COLORS)]
         snaps, lab = p["snaps"], p["label"]
         ax_s.plot(days, _arr(snaps, "saidi"), color=c, lw=2.2, label=lab)
+        # voltage panel: dashed min (no legend entry) + solid mean (legend);
+        # min lines are near-identical across phases, so labelling only the mean
+        # keeps the legend to N entries instead of 2N and avoids data overlap.
         ax_v.plot(days, _arr(snaps, "vmin_pu"), color=c, lw=1.4, ls="--",
-                  label=f"{lab} min")
-        ax_v.plot(days, _arr(snaps, "vmean_pu"), color=c, lw=2.2,
-                  label=f"{lab} mean")
+                  label="_nolegend_")
+        ax_v.plot(days, _arr(snaps, "vmean_pu"), color=c, lw=2.2, label=lab)
         ax_m.plot(days, _arr(snaps, "served_mw"), color=c, lw=2.2, label=lab)
         ax_t.plot(days, _arr(snaps, "intertie_mw"), color=c, lw=2.2, label=lab)
 
     ax_s.set_title("Cumulative SAIDI", fontsize=11)
     ax_s.set_ylabel("SAIDI (customer-min / customer)")
-    ax_v.set_title("Bus voltage (min dashed / mean solid)", fontsize=11)
+    ax_v.set_title("Bus voltage  (mean = solid, min = dashed)", fontsize=11)
     ax_v.set_ylabel("Voltage (p.u.)")
     ax_m.set_title("Total served / consumed power", fontsize=11)
     ax_m.set_ylabel("Served (MW)")
@@ -180,9 +182,20 @@ def build_figure_n(phases, title=None):
             parts.append(f"{p['label']}: {p['acres']:,.0f} ac "
                          f"(saved {saved:,.0f}; "
                          f"{mw_per_rh:,.2f} MW/tanker-hr)")
-    fig.text(0.5, 0.005, "Final burned area  —  " + "   |   ".join(parts),
-             ha="center", fontsize=9.5, fontweight="bold")
-    fig.tight_layout(rect=[0, 0.03, 1, 0.96])
+    # Banner: split the per-phase summary across as many lines as needed so the
+    # text never overruns the figure width (a single centred line overflowed for
+    # 4 phases). Two phases per line keeps it comfortably inside the margins.
+    per_line = 2
+    banner_lines = [
+        "   |   ".join(parts[i:i + per_line])
+        for i in range(0, len(parts), per_line)
+    ]
+    banner = "Final burned area  \u2014  " + "\n".join(banner_lines)
+    fig.text(0.5, 0.012, banner, ha="center", va="bottom",
+             fontsize=8.5, fontweight="bold", linespacing=1.5)
+    # reserve extra bottom room proportional to the number of banner lines
+    bottom = 0.045 + 0.022 * (len(banner_lines) - 1)
+    fig.tight_layout(rect=[0, bottom, 1, 0.96])
     return fig, deltas
 
 

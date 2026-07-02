@@ -35,6 +35,9 @@ venv/
 env/
 .pg_password
 pgdata/
-runtime_pg.conf.yaml
-runtime_pg_eaton.conf.yaml
-runtime_pg_eaton3.conf.yaml
+pgsock/
+# Local PostgreSQL runtime configs contain a DB password -> never commit.
+runtime_pg*.conf.yaml
+
+# GitLab push helper embeds credential handling for local use only.
+push_to_gitlab.py

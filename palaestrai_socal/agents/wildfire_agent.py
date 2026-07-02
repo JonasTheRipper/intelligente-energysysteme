@@ -84,6 +84,13 @@ class WildfireCmaMuscle(Muscle):
         bounds: Optional[List[float]] = None,
         cell_size_m: Optional[float] = None,
         seed: int = 0,
+        # v0.5 spatial wind params (default OFF => existing behaviour unchanged)
+        perimeter_path: Optional[str] = None,
+        base_speed: Optional[float] = None,
+        boundary_gain: float = 0.3,
+        wind_field_npz: Optional[str] = None,
+        fuel_reclass: bool = False,
+        containment_margin: Optional[int] = None,
     ):
         super().__init__()
         # Static geometry fallbacks. palaestrAI's per-agent flat memory
@@ -110,6 +117,13 @@ class WildfireCmaMuscle(Muscle):
             wind_speed=float(wind_speed),
             wind_dir_deg=float(wind_dir_deg),
             seed=int(seed),
+            # v0.5 spatial wind
+            perimeter_path=perimeter_path,
+            base_speed=base_speed,
+            boundary_gain=float(boundary_gain),
+            wind_field_npz=wind_field_npz,
+            fuel_reclass=bool(fuel_reclass),
+            containment_margin=(int(containment_margin) if containment_margin is not None else None),
         )
         self._driver: Optional[WildfireDriver] = None
 

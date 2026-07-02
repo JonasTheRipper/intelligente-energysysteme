@@ -16,6 +16,17 @@ palaestrai==3.5.9
 palaestrai-mosaik==3.5.7
 midas-palaestrai==3.5.9
 
+# MIDAS power-grid simulator (needed by the firefighting experiment's socal_grid
+# environment). INSTALL GOTCHA: `pip install midas-powergrid` will try to pull
+# numpy>=2 / pandas>=2.3, which breaks palaestrAI (numpy<2, pandas==2.1.4). Install
+# it and its extra deps with --no-deps AFTER the pinned numpy/pandas above, e.g.:
+#   python -m pip install --no-deps midas-powergrid==2.1.0 simbench==1.6.2 natsort joblib
+# (simbench/natsort/joblib are midas-powergrid's runtime deps that are safe to add.)
+midas-powergrid==2.1.0
+simbench==1.6.2
+natsort>=8.4
+joblib>=1.3
+
 # PostGIS staging layer (Part 3 GIS persistence). psycopg3 also works if
 # present; the code falls back to psycopg2 automatically.
 psycopg2-binary>=2.9

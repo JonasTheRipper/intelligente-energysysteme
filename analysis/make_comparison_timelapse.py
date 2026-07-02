@@ -47,6 +47,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import ListedColormap, BoundaryNorm  # noqa: E402
 import matplotlib.animation as animation  # noqa: E402
+import matplotlib.patheffects as pe  # noqa: E402
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -54,7 +55,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from analysis.store_readers import read_run, list_phases  # noqa: E402
-from analysis.make_timelapse import _topo_basemap  # noqa: E402
+from analysis.make_timelapse import _topo_basemap, _hillshade  # noqa: E402
 from analysis.plane_icons import plane_positions  # noqa: E402
 
 # SUPPRESSED retardant code surfaced by store_readers as fire_code==3.
@@ -70,20 +71,49 @@ _PHASE_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e",
 
 
 def _fire_cmap():
-    """Per-tactic fire colormap (v0.4).
+    """Per-tactic fire colormap (v0.4/v0.5).
 
     Codes: 0 UNBURNED (transparent), 1 BURNING (orange), 2 BURNED_OUT (grey),
     3 SUPPRESSED retardant/wetline (pink), 4 FLOODED (blue, reserved/unused),
     5 CONTAINED ground line / point protection (dozer brown). The pink vs brown
     split colours retardant-air vs ground-containment tactics apart.
+
+    v0.5: every overlay alpha is reduced so the hillshaded California terrain
+    reads THROUGH the fire/suppression layers (handoff requirement). Burning
+    stays the most opaque (it is the live front); burned-out is the most
+    translucent so the terrain under the scar is clearly visible.
     """
-    cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.33, 0.0, 0.92),
-                           (0.18, 0.18, 0.18, 0.62),
-                           (0.96, 0.36, 0.55, 0.90),
-                           (0.20, 0.45, 0.85, 0.85),
-                           (0.55, 0.36, 0.18, 0.92)])
+    cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.30, 0.0, 0.74),
+                           (0.16, 0.16, 0.16, 0.42),
+                           (0.96, 0.36, 0.55, 0.70),
+                           (0.20, 0.45, 0.85, 0.68),
+                           (0.55, 0.36, 0.18, 0.74)])
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5], cmap.N)
     return cmap, norm
+
+
+def _topo_basemap_muted(dem, delta_m, ocean_mask=None):
+    """v0.5 basemap: hypsometric terrain + hillshade tuned so relief is CLEARLY
+    visible yet muted enough not to fight the semi-transparent fire overlays.
+
+    Differs from analysis.make_timelapse._topo_basemap by (a) a stronger
+    hillshade contribution (relief reads better) and (b) a mild desaturation
+    toward a neutral base so the orange/pink fire layers pop against it.
+    """
+    import matplotlib as mpl
+    from matplotlib.colors import Normalize
+    lo, hi = np.percentile(dem, 2), np.percentile(dem, 98)
+    norm = Normalize(vmin=lo, vmax=max(hi, lo + 1.0))
+    tint = mpl.colormaps["terrain"](norm(dem))[:, :, :3]
+    hs = _hillshade(dem, delta_m, z_factor=2.6)[:, :, None]
+    # stronger multiplicative relief (0.30..1.0 vs the 0.45..1.0 base map)
+    rgb = tint * (0.30 + 0.70 * hs)
+    # mute: pull 32%% toward a light neutral grey so overlays stay legible
+    grey = np.array([0.86, 0.86, 0.84])
+    rgb = 0.68 * rgb + 0.32 * grey
+    if ocean_mask is not None:
+        rgb[ocean_mask] = np.array([0.80, 0.87, 0.93])  # pale blue ocean/non-fuel
+    return np.clip(rgb, 0, 1)
 
 
 def _suppressed_mask(snap) -> np.ndarray:
@@ -128,23 +158,83 @@ def _active_planes(events, fi, extent, nr, nc):
     return out
 
 
-def _draw_map(ax, meta, title):
+def _draw_real_perimeter(ax, perimeter_polys, extent):
+    """Overlay the official CAL FIRE perimeter as a bright dashed outline.
+
+    ``perimeter_polys`` is the list-of-polygons structure returned by
+    analysis.perimeter_validation.load_perimeter_polygons: each polygon is a
+    list of rings, each ring an (N, 2) array of (lon, lat) vertices. Drawn at a
+    high zorder so it sits above the fire raster but is thin/dashed so it never
+    obscures the burn evolution. A soft dark halo underneath keeps it legible
+    over both the pale terrain and the bright fire colours.
+    """
+    if not perimeter_polys:
+        return
+    for poly in perimeter_polys:
+        if not poly:
+            continue
+        ring = poly[0]  # exterior ring only (holes are rare for fire footprints)
+        lons, lats = ring[:, 0], ring[:, 1]
+        # dark halo (wider, low alpha) then the bright dashed line on top
+        ax.plot(lons, lats, color="#101010", lw=3.4, alpha=0.55,
+                solid_capstyle="round", zorder=5.8)
+        ax.plot(lons, lats, color="#00e5ff", lw=1.7, ls=(0, (6, 3)),
+                alpha=0.95, zorder=6.0)
+
+
+def _draw_city_labels(ax, cities, extent):
+    """Annotate place names so the viewer can orient on the terrain.
+
+    ``cities`` is a list of (name, lon, lat) tuples. Only points inside the
+    map extent are drawn. A small marker dot plus a haloed label keep the text
+    readable over terrain and fire alike, at a zorder above the perimeter.
+    """
+    if not cities:
+        return
+    minlon, maxlon, minlat, maxlat = extent
+    for name, lon, lat in cities:
+        if not (minlon <= lon <= maxlon and minlat <= lat <= maxlat):
+            continue
+        ax.plot(lon, lat, marker="o", ms=3.6, mfc="#ffffff", mec="#111111",
+                mew=0.7, zorder=7.0)
+        txt = ax.annotate(
+            name, xy=(lon, lat), xytext=(4, 3), textcoords="offset points",
+            fontsize=7.6, fontweight="bold", color="#f7f7f7",
+            ha="left", va="bottom", zorder=7.1,
+        )
+        txt.set_path_effects([
+            pe.Stroke(linewidth=2.1, foreground="#111111"),
+            pe.Normal(),
+        ])
+
+
+def _draw_map(ax, meta, title, perimeter_polys=None, cities=None):
     """Static basemap (hillshaded terrain) + an empty fire raster; return im."""
     extent = meta["extent"]
     dem = meta["dem"]
     delta_m = meta["delta_m"]
     ocean_mask = (dem <= 0.0)
-    topo_rgb = _topo_basemap(dem, delta_m, ocean_mask=ocean_mask)
+    topo_rgb = _topo_basemap_muted(dem, delta_m, ocean_mask=ocean_mask)
     ax.imshow(topo_rgb, origin="upper", extent=extent, zorder=0,
               interpolation="bilinear")
     cmap, norm = _fire_cmap()
     fire_im = ax.imshow(np.zeros((2, 2), dtype=np.int8), cmap=cmap, norm=norm,
                         origin="upper", extent=extent, zorder=3,
                         interpolation="nearest")
+    # v0.5: static orientation overlays (real perimeter + place names).
+    _draw_real_perimeter(ax, perimeter_polys, extent)
+    _draw_city_labels(ax, cities, extent)
     ax.set_xlim(extent[0], extent[1])
     ax.set_ylim(extent[2], extent[3])
     ax.set_title(title, fontsize=10.5, fontweight="bold", pad=4)
     ax.tick_params(labelsize=7)
+    # v0.5: keep the lon/lat tick labels legible (avoid the cramped, overlapping
+    # default ticks on the ~0.2-degree extents used for these fires).
+    from matplotlib.ticker import MaxNLocator, FormatStrFormatter
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=5, prune="both"))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6, prune="both"))
+    ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+    ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
     return fire_im
 
 
@@ -171,6 +261,7 @@ def _disp_short(p):
 
 def render_comparison(
     phases, *legacy, n_planes=3, outdir=None, stride=1, fps=12, title=None,
+    perimeter_polys=None, cities=None,
 ):
     """Render an N-row firefighter timelapse to GIF (+ MP4 if ffmpeg present).
 
@@ -248,12 +339,13 @@ def render_comparison(
     map_span = nrows // nP       # rows per map
     met_span = nrows // 4        # rows per metric axis
 
-    fig_h = max(7.5, 3.0 * nP + 1.0)
-    fig = plt.figure(figsize=(15.5, fig_h))
+    # v0.5: taller rows + a wider MAP column so California terrain reads clearly.
+    fig_h = max(8.2, 3.4 * nP + 1.1)
+    fig = plt.figure(figsize=(17.5, fig_h))
     gs = fig.add_gridspec(
-        nrows, 2, width_ratios=[1.18, 1.0],
-        hspace=1.15, wspace=0.22,
-        left=0.055, right=0.985, top=0.92, bottom=0.06,
+        nrows, 2, width_ratios=[1.72, 1.0],
+        hspace=1.15, wspace=0.19,
+        left=0.05, right=0.986, top=0.92, bottom=0.06,
     )
 
     map_axes = []
@@ -264,7 +356,8 @@ def render_comparison(
         ax = fig.add_subplot(gs[i * map_span:(i + 1) * map_span, 0])
         lbl = _disp_label(p)
         tag = "Baseline" if p["n_planes"] <= 0 else "Firefighters"
-        fim = _draw_map(ax, p["meta"], f"{tag} — {lbl.upper()}")
+        fim = _draw_map(ax, p["meta"], f"{tag} — {lbl.upper()}",
+                        perimeter_polys=perimeter_polys, cities=cities)
         ax.set_ylabel("Latitude", fontsize=8)
         if i == nP - 1:
             ax.set_xlabel("Longitude", fontsize=8)
@@ -284,6 +377,21 @@ def render_comparison(
         fire_ims.append(fim)
         plane_artist_lists.append([])
         hud_txts.append(hud)
+
+    # v0.5: orientation legend (real perimeter + place names) on the top map.
+    if (perimeter_polys or cities) and map_axes:
+        from matplotlib.lines import Line2D
+        leg_handles = []
+        if perimeter_polys:
+            leg_handles.append(Line2D([0], [0], color="#00e5ff", lw=1.7,
+                                      ls=(0, (6, 3)),
+                                      label="Official CAL FIRE perimeter"))
+        if cities:
+            leg_handles.append(Line2D([0], [0], marker="o", color="none",
+                                      mfc="#ffffff", mec="#111111", mew=0.7,
+                                      ms=5, label="Place / city"))
+        map_axes[0].legend(handles=leg_handles, loc="upper left", fontsize=7,
+                           framealpha=0.88, borderpad=0.4, handlelength=1.8)
 
     ax_saidi = fig.add_subplot(gs[0 * met_span:1 * met_span, 1])
     ax_volt = fig.add_subplot(gs[1 * met_span:2 * met_span, 1])
@@ -507,7 +615,34 @@ def main():
     ap.add_argument("--fps", type=int, default=12)
     ap.add_argument("--outdir", default=None)
     ap.add_argument("--title", default=None)
+    ap.add_argument("--perimeter", default=None,
+                    help="GeoJSON of the official fire perimeter to overlay "
+                         "(dashed line) on every map row for orientation")
+    ap.add_argument("--cities", default=None,
+                    help="semicolon list of place labels 'Name,lon,lat'; e.g. "
+                         "'Altadena,-118.131,34.190;Pasadena,-118.145,34.156'")
     args = ap.parse_args()
+
+    # optional orientation overlays
+    perimeter_polys = None
+    if args.perimeter:
+        from analysis.perimeter_validation import load_perimeter_polygons
+        perimeter_polys = load_perimeter_polygons(args.perimeter)
+        print(f"[compare] perimeter overlay: {args.perimeter} "
+              f"({len(perimeter_polys)} polygon(s))")
+    cities = None
+    if args.cities:
+        cities = []
+        for token in args.cities.split(";"):
+            token = token.strip()
+            if not token:
+                continue
+            parts = token.split(",")
+            if len(parts) != 3:
+                raise ValueError(f"bad --cities entry (want Name,lon,lat): {token}")
+            name = parts[0].strip()
+            cities.append((name, float(parts[1]), float(parts[2])))
+        print(f"[compare] city labels: {', '.join(c[0] for c in cities)}")
 
     specs = _parse_phase_spec(args.store, args)
     print("[compare] phases:", ", ".join(f"{u}(n={n})" for u, n, _ in specs))
@@ -518,7 +653,8 @@ def main():
         phases.append({"snaps": snaps, "meta": meta, "n_planes": n,
                        "uid": uid, "label": label})
     render_comparison(phases, outdir=args.outdir, stride=args.stride,
-                      fps=args.fps, title=args.title)
+                      fps=args.fps, title=args.title,
+                      perimeter_polys=perimeter_polys, cities=cities)
 
 
 if __name__ == "__main__":

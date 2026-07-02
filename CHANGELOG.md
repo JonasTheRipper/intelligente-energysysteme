@@ -3,6 +3,56 @@
 All notable changes to the **SoCal Wildfires — Grid Co-Simulation** testbed.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [v0.5] — 2026-07-02
+
+**Real-fire calibration** — the no-firefighting baseline is now calibrated to the
+**official CAL FIRE perimeters** of the January 2025 **Eaton** and **Palisades** fires,
+and the v0.4 firefighting phases are re-run on top of each calibrated baseline as
+counterfactuals. The CA kernel and the firefighting model are **unchanged**. Full
+notes: [`docs/v0.5_CALIBRATION_VALIDATION.md`](docs/v0.5_CALIBRATION_VALIDATION.md);
+operational how-to: [`docs/RUNNING_THE_EXPERIMENT.md`](docs/RUNNING_THE_EXPERIMENT.md) §8.
+
+### Added
+- **Perimeter-informed wind + containment** (`wildfire_cma/wind_field.py`):
+  `perimeter_informed_wind_field(...)` (time-/space-varying Santa-Ana wind schedule
+  derived from the real perimeter geometry), `reclassify_burned_footprint(...)`
+  (homogenise fuel inside the observed footprint; Palisades `fuel_reclass=True`), and
+  `contain_burnable_footprint(fuel, real_mask, margin_cells=2)` (dilate the real mask
+  by `containment_margin` cells and set fuel outside → non-burnable, representing the
+  fuel breaks / terrain / suppression that arrested each fire). Without containment the
+  free-running CA overshoots by +145 % (Eaton) / +129 % (Palisades).
+- **Validation harness** (`analysis/perimeter_validation.py`):
+  `load_perimeter_polygons`, `rasterize_perimeter`, `score` (Dice / Jaccard / acres /
+  area%), `meets_bar` (Dice ≥ 0.8 **and** \|area%\| ≤ 10).
+- **Official CAL FIRE perimeters** (`data/perimeters/{eaton,palisades}_perimeter.geojson`).
+- **Per-fire experiments**: `experiment_eaton_firefighting.yml` (130×182) and
+  `experiment_palisades_firefighting.yml` (159×219), each with the calibrated
+  environment (grid/bounds/ignition/wind/`containment_margin: 2`) across all 4 phases.
+- **`analysis/verify_calibration.py`** — asserts peak **and** final(60) meet the bar for
+  both fires via the production `WildfireDriver` path (no monkeypatch).
+- **`analysis/make_sim_vs_real.py`** — static simulated-vs-official perimeter overlay
+  with a metrics box, per fire.
+- **+4 containment tests** (`tests/test_wind_field.py::TestContainBurnableFootprint`).
+
+### Changed
+- **Timelapse renderer** (`analysis/make_comparison_timelapse.py`): bigger GIS map with
+  visible hillshaded topography; new `--perimeter <geojson>` (cyan-dashed official
+  perimeter overlay) and `--cities "Name,lon,lat;…"` (labelled place markers) flags; an
+  orientation legend and fixed axis ticks. Two separate timelapses (Eaton, Palisades).
+- **`WildfireDriver` / `WildfireCmaMuscle`**: accept `perimeter_path`, `base_speed`,
+  `boundary_gain`, `fuel_reclass`, `containment_margin` kwargs (back-compatible — the
+  scalar-wind path is unchanged when no `perimeter_path` is supplied).
+
+### Results (no-firefighting baseline vs. official perimeter, final env step 60)
+- **Eaton** (130×182): **Dice = 0.906**, area error **−2.2 %** (13,786 vs 14,102 ac) — **PASS**.
+- **Palisades** (159×219): **Dice = 0.952**, area error **+3.7 %** (24,677 vs 23,799 ac) — **PASS**.
+- Firefighting counterfactuals: full-triage holds Eaton **SAIDI 1.61 → 0.24** (~5,588 ac
+  saved) and Palisades ~1,811 ac saved — grid benefit again dominates raw acreage.
+
+### Preserved
+- **CA kernel unchanged**; **v0.2 / v0.3 / v0.4 identities** all still hold and are
+  test-guarded (**181 passed, 1 skipped**).
+
 ## [v0.4] — 2026-06-28
 
 **Full-blown firefighting** — the v0.3 aero-tanker responder becomes a deterministic,

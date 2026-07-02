@@ -190,6 +190,7 @@ class WildfireCMA:
         self.state = np.full((nrows, ncols), UNBURNED, dtype=np.int8)
         self.burn_timer = np.zeros((nrows, ncols), dtype=np.int16)
         self.step_count = 0
+        self._wind_field = None  # optional per-cell wind: (nrows, ncols, 2) = [speed m/s, dir_deg]
 
         # precompute slope (rise/run) magnitude and aspect from the DEM
         gy, gx = np.gradient(raster.dem.astype(float), raster.delta_m)
@@ -202,6 +203,19 @@ class WildfireCMA:
         # plus any explicit (row, col) cells (test / low-level use)
         rc_points += list(self.theta.ignition_rc)
         self._ignite(rc_points)
+
+    def set_wind_field(self, wind_field) -> None:
+        """Optional per-cell wind [speed, from-dir-deg]; None => scalar theta wind.
+
+        When set, _phi_wind reads per-cell speed/dir; the scalar theta path is the
+        fallback so the no-field behaviour is bit-for-bit identical (all tests preserved).
+        """
+        if wind_field is None:
+            self._wind_field = None
+            return
+        wf = np.asarray(wind_field, dtype=float)
+        assert wf.shape == (self.raster.shape[0], self.raster.shape[1], 2), wf.shape
+        self._wind_field = wf
 
     # -- helpers -----------------------------------------------------------
     def _burnable(self, row: int, col: int) -> bool:
@@ -223,15 +237,22 @@ class WildfireCMA:
         return rc
 
     # -- physics: eq. 6 rate of spread -------------------------------------
-    def _phi_wind(self, dr: int, dc: int) -> float:
+    def _phi_wind(self, dr: int, dc: int, row=None, col=None) -> float:
         """Wind factor for spread into direction (dr, dc).
 
         Aligns the wind vector (blowing toward dir+180) with the spread
         direction; an exponential midflame wind speed factor (Rothermel-style).
+        When _wind_field is set and row/col are provided, reads per-cell values;
+        otherwise falls back to scalar theta (bit-for-bit identical to pre-v0.5).
         """
-        u = self.theta.wind_speed
+        if self._wind_field is not None and row is not None:
+            u = float(self._wind_field[row, col, 0])
+            wdir = float(self._wind_field[row, col, 1])
+        else:
+            u = self.theta.wind_speed
+            wdir = self.theta.wind_dir_deg
         # direction the wind blows TOWARD (meteorological 'from' + 180)
-        toward = math.radians((self.theta.wind_dir_deg + 180.0) % 360.0)
+        toward = math.radians((wdir + 180.0) % 360.0)
         # spread bearing: dc -> east(+x), dr -> south(+y). bearing from north.
         spread_bearing = math.atan2(dc, -dr)
         # angle between wind-toward and spread direction
@@ -275,7 +296,7 @@ class WildfireCMA:
         r0 = self._ros_base(row, col)
         if r0 <= 0:
             return 0.0
-        return self.theta.kappa * r0 * self._phi_wind(dr, dc) * self._phi_slope(row, col, dr, dc)
+        return self.theta.kappa * r0 * self._phi_wind(dr, dc, row, col) * self._phi_slope(row, col, dr, dc)
 
     def spread_prob(self, row: int, col: int, dr: int, dc: int, diagonal: bool) -> float:
         """Eq. 7 spread probability for one CMA sub-step."""

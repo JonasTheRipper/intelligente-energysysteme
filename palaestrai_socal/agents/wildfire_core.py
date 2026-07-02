@@ -44,6 +44,11 @@ from wildfire_cma.cma import (  # noqa: E402
     Theta,
     WildfireCMA,
 )
+from wildfire_cma.wind_field import (  # noqa: E402
+    perimeter_informed_wind_field,
+    reclassify_burned_footprint,
+    contain_burnable_footprint,
+)
 
 # layer code for fire-written cells (mirrors palaestrai_socal.spaces.LAYER_FIRE,
 # duplicated here so this module stays import-light / palaestrai-free).
@@ -66,7 +71,7 @@ class WildfireDriver:
         Cell size in metres (``gis.cell_size_m`` sensor).
     bounds:
         ``(minlon, minlat, maxlon, maxlat)`` (``gis.bounds`` sensor); used to
-        convert ignition ``(lon, lat)`` to raster ``(row, col)``.
+        convert ignition ``(lon, lat)`` to raster ``(row, col)``
     ignition_points:
         List of ``(lon, lat)`` geographic ignition coordinates (agent param).
     ignition_rc:
@@ -76,6 +81,21 @@ class WildfireDriver:
     env_step_min:
         Wall-clock minutes advanced per environment step (CMA runs
         ``env_step_min / dt_cma_min`` sub-steps each step).
+    perimeter_path:
+        (v0.5) Path to GeoJSON perimeter used to build the spatial wind field
+        on-the-fly.  Requires ``base_speed``.  If ``wind_field_npz`` is also
+        supplied, the npz takes precedence.
+    base_speed:
+        (v0.5) Base wind speed [m/s] for the perimeter-informed wind field.
+    boundary_gain:
+        (v0.5) Fractional speed gain toward the deepest interior (default 0.3).
+    wind_field_npz:
+        (v0.5) Path to a .npz file containing key ``wind_field`` (nrows,ncols,2).
+        Overrides on-the-fly build.
+    fuel_reclass:
+        (v0.5) If True, reclassify non-burnable class-0 cells inside the real
+        perimeter to chaparral (class 3) before building the CMA.  Requires
+        ``perimeter_path``.  Needed for Palisades; Eaton: False.
     """
 
     def __init__(
@@ -95,9 +115,49 @@ class WildfireDriver:
         wind_speed: float = 15.0,
         wind_dir_deg: float = 45.0,
         seed: int = 0,
+        # v0.5 spatial wind kwargs (all default OFF => existing behaviour unchanged)
+        perimeter_path: Optional[str] = None,
+        base_speed: Optional[float] = None,
+        boundary_gain: float = 0.3,
+        wind_field_npz: Optional[str] = None,
+        fuel_reclass: bool = False,
+        # v0.5.1: arrest spread at the real perimeter (see contain_burnable_footprint).
+        # None/0 => no containment (unbounded growth, pre-v0.5.1 behaviour). A
+        # positive value makes cells more than N cells outside the perimeter
+        # non-burnable so the calibrated no-FF baseline settles AT the real
+        # perimeter and holds a stable extent through the full run.
+        containment_margin: Optional[int] = None,
     ):
+        fuel_arr = np.asarray(fuel, dtype=np.int16)
+
+        # Compute the real perimeter mask ONCE if any perimeter-driven feature is
+        # requested (reclass, containment, or on-the-fly wind field).
+        _real_mask = None
+        if perimeter_path is not None and (
+            fuel_reclass or containment_margin is not None or base_speed is not None
+        ):
+            # Lazy import to keep this module palaestrai-free; perimeter_validation
+            # lives under analysis/ which is on PYTHONPATH via _ROOT insertion above.
+            import importlib
+            pv = importlib.import_module("analysis.perimeter_validation")
+            polys = pv.load_perimeter_polygons(perimeter_path)
+            nrows_f, ncols_f = fuel_arr.shape
+            _real_mask = pv.rasterize_perimeter(polys, bounds, nrows_f, ncols_f)
+
+        # Optionally reclassify non-burnable cells inside the real perimeter.
+        # Needed for Palisades (~13% urban/coastal inside footprint); Eaton: off.
+        if fuel_reclass and _real_mask is not None:
+            fuel_arr = reclassify_burned_footprint(fuel_arr, _real_mask, target_class=3)
+
+        # Optionally arrest spread a few cells beyond the real perimeter so the
+        # calibrated fire fills its footprint then holds (no unbounded growth).
+        if containment_margin is not None and _real_mask is not None:
+            fuel_arr = contain_burnable_footprint(
+                fuel_arr, _real_mask, margin_cells=int(containment_margin)
+            )
+
         self.raster = RasterStack(
-            fuel=np.asarray(fuel, dtype=np.int16),
+            fuel=fuel_arr,
             dem=np.asarray(dem, dtype=float),
             delta_m=float(delta_m),
             bounds=tuple(bounds),
@@ -127,6 +187,27 @@ class WildfireDriver:
             t_burn_steps=int(t_burn_steps),
             seed=int(seed),
         )
+
+        # v0.5: inject optional per-cell wind field.
+        # npz takes precedence; else build on-the-fly from perimeter + scalars.
+        if wind_field_npz is not None:
+            wf = np.load(wind_field_npz)["wind_field"]
+            self._cma.set_wind_field(wf)
+        elif perimeter_path is not None and base_speed is not None:
+            # Reuse the mask computed above (same grid) if available.
+            if _real_mask is not None:
+                real_mask = _real_mask
+            else:
+                import importlib
+                pv = importlib.import_module("analysis.perimeter_validation")
+                polys = pv.load_perimeter_polygons(perimeter_path)
+                nrows_c, ncols_c = self.raster.shape
+                real_mask = pv.rasterize_perimeter(polys, bounds, nrows_c, ncols_c)
+            wf = perimeter_informed_wind_field(
+                real_mask, float(base_speed), float(boundary_gain)
+            )
+            self._cma.set_wind_field(wf)
+
         # the driver owns the authoritative burn timer across env steps
         self.burn_timer = np.zeros(self.raster.shape, dtype=np.int16)
         self._step = 0
@@ -141,7 +222,14 @@ class WildfireDriver:
         return cells
 
     def set_wind(self, wind_speed: float, wind_dir_deg: float) -> None:
-        """Update the CMA wind (driven by the ``gis.wind_field`` sensor)."""
+        """Update the CMA wind (driven by the ``gis.wind_field`` sensor).
+
+        When a per-cell wind_field is active it is authoritative; the scalar
+        sensor is ignored so calibrated runs are not clobbered by the env wind.
+        """
+        if self._cma._wind_field is not None:
+            # Per-cell field is active; scalar sensor is a no-op for calibrated runs.
+            return
         self._cma.theta.wind_speed = float(wind_speed)
         self._cma.theta.wind_dir_deg = float(wind_dir_deg)
         self._cma.theta.clamp()

@@ -1,10 +1,17 @@
-# Running & Modifying the Firefighting Experiment (v0.4)
+# Running & Modifying the Firefighting Experiment (v0.4 + v0.5)
 
-A complete, copy-paste operational guide for the v0.4 multi-resource firefighting
+A complete, copy-paste operational guide for the multi-resource firefighting
 experiment: how to **run** it, **change** the resource mix / doctrine / phases, and
 **read** the results into figures. For the *design* see
 [`DESIGN_firefighting_actions.md`](DESIGN_firefighting_actions.md); for the release
 summary see [`v0.4_RELEASE.md`](v0.4_RELEASE.md).
+
+> **v0.5 (calibrated real fires).** In v0.5 the same firefighting experiment is run on
+> top of **no-firefighting baselines calibrated to the real Jan-2025 Eaton and
+> Palisades perimeters**. If you want the calibrated two-fire workflow (perimeter
+> validation, both experiment YAMLs, sim-vs-real figures), jump to **§8**; the
+> calibration methodology and results live in
+> [`v0.5_CALIBRATION_VALIDATION.md`](v0.5_CALIBRATION_VALIDATION.md).
 
 > **Convention.** All commands assume you are at the repository root with the venv
 > active and `PYTHONPATH` set to the repo root:
@@ -307,3 +314,107 @@ python analysis/make_comparison_timelapse.py --store "$STORE" --stride 1 --fps 1
 python analysis/grid_metrics_report.py --store "$STORE" --out analysis/grid_metrics_v04.png \
   --phases "phase_0_no_ff:0:No firefighting,phase_1_air:3:Air only,phase_2_air_ground:3:Air+ground,phase_3_full_triage:3:Full triage+protect"
 ```
+
+---
+
+## 8. v0.5 — the calibrated two-fire workflow
+
+v0.5 runs the **same** firefighting experiment on **no-firefighting baselines
+calibrated to the real Jan-2025 Eaton and Palisades perimeters**. Methodology, exact
+calibrated parameters, and the pass/fail table are in
+[`v0.5_CALIBRATION_VALIDATION.md`](v0.5_CALIBRATION_VALIDATION.md); this section is the
+operational recipe.
+
+### 8.1 Verify the calibration (no store needed)
+
+This rebuilds each baseline via the production `WildfireDriver` path and asserts the
+hard bar (**Dice ≥ 0.80 AND \|area%\| ≤ 10**) at **peak and final(60)** for both fires:
+
+```bash
+python analysis/verify_calibration.py
+# -> Eaton final(60) Dice=0.906 area%=-2.2% PASS ; Palisades Dice=0.952 area%=+3.7% PASS
+```
+
+The calibrated knobs (grid, bounds, ignition, base_speed, boundary_gain, moisture,
+kappa, fuel_reclass, containment_margin) are baked into `verify_calibration.py`,
+`analysis/make_sim_vs_real.py`, and both experiment YAMLs. **Do not change them** unless
+you re-calibrate against the perimeter (they are what makes the fires match reality).
+
+### 8.2 Static sim-vs-real perimeter overlay
+
+One-glance "did we match the real fire?" figure — simulated final burn vs. official
+CAL FIRE perimeter, with a metrics box:
+
+```bash
+python analysis/make_sim_vs_real.py --fire eaton \
+    --out analysis/_v05_eaton/sim_vs_real_eaton.png
+python analysis/make_sim_vs_real.py --fire palisades \
+    --out analysis/_v05_palisades/sim_vs_real_palisades.png
+```
+
+### 8.3 Run the firefighting counterfactuals for both fires
+
+Each fire has its own experiment YAML and its own store (phase uids must be unique per
+store). Set up TimescaleDB, create the schema, then run:
+
+```bash
+# --- Eaton ---
+cp runtime_pg_eaton.conf.yaml runtime_pg_myeaton.conf.yaml   # set store_uri -> fresh DB
+palaestrai -c runtime_pg_myeaton.conf.yaml database-create
+setsid bash _outputs/run_full_pg.sh runtime_pg_myeaton.conf.yaml \
+    palaestrai_socal/experiment_eaton_firefighting.yml eaton_v05 < /dev/null >/dev/null 2>&1 &
+
+# --- Palisades (use a DIFFERENT DB and a different executor_bus_port) ---
+cp runtime_pg_palisades.conf.yaml runtime_pg_mypal.conf.yaml  # set store_uri -> fresh DB
+palaestrai -c runtime_pg_mypal.conf.yaml database-create
+setsid bash _outputs/run_full_pg.sh runtime_pg_mypal.conf.yaml \
+    palaestrai_socal/experiment_palisades_firefighting.yml palisades_v05 < /dev/null >/dev/null 2>&1 &
+
+grep EXIT_RC _outputs/eaton_v05_run.log _outputs/palisades_v05_run.log   # want =0
+```
+
+> **Store-schema gotcha.** `database-create` needs the database to exist **and** the
+> TimescaleDB (and PostGIS) extensions installed first, otherwise the store receiver
+> fails with `relation "experiments" does not exist`. On a fresh DB:
+> ```sql
+> CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
+> CREATE EXTENSION IF NOT EXISTS postgis CASCADE;
+> ```
+> then run `palaestrai -c <conf> database-create`.
+
+> **Two experiments at once.** Give each fire a **separate database** and a **distinct
+> `executor_bus_port`** in its runtime conf (e.g. 4242 for Eaton, 4243 for Palisades)
+> so the two runs don't collide on the broker port.
+
+### 8.4 Render the per-fire figures (timelapse + grid metrics)
+
+Same renderers as §5, pointed at each fire's store, with the fire's perimeter overlaid
+and city labels for orientation:
+
+```bash
+# Eaton
+STORE_EATON="postgresql://USER:PW@HOST:PORT/palaestrai_eaton_v05"
+python analysis/make_comparison_timelapse.py --store "$STORE_EATON" \
+  --stride 1 --fps 10 --outdir analysis/_v05_eaton \
+  --phases "phase_0_no_ff:0:no firefighters,phase_1_air:3:3 aero tankers,phase_2_air_ground:3:air+ground,phase_3_full_triage:3:full triage" \
+  --perimeter data/perimeters/eaton_perimeter.geojson \
+  --cities "Altadena,-118.131,34.190;Pasadena,-118.145,34.156;Sierra Madre,-118.053,34.162;La Canada,-118.201,34.199"
+python analysis/grid_metrics_report.py --store "$STORE_EATON" \
+  --out analysis/_v05_eaton/grid_metrics_eaton.png \
+  --phases "phase_0_no_ff:0:no firefighters,phase_1_air:3:3 aero tankers,phase_2_air_ground:3:air+ground,phase_3_full_triage:3:full triage"
+
+# Palisades
+STORE_PAL="postgresql://USER:PW@HOST:PORT/palaestrai_palisades_v05"
+python analysis/make_comparison_timelapse.py --store "$STORE_PAL" \
+  --stride 1 --fps 10 --outdir analysis/_v05_palisades \
+  --phases "phase_0_no_ff:0:no firefighters,phase_1_air:3:3 aero tankers,phase_2_air_ground:3:air+ground,phase_3_full_triage:3:full triage" \
+  --perimeter data/perimeters/palisades_perimeter.geojson \
+  --cities "Pacific Palisades,-118.526,34.048;Malibu,-118.667,34.032;Santa Monica,-118.491,34.020;Topanga,-118.601,34.094"
+python analysis/grid_metrics_report.py --store "$STORE_PAL" \
+  --out analysis/_v05_palisades/grid_metrics_palisades.png \
+  --phases "phase_0_no_ff:0:no firefighters,phase_1_air:3:3 aero tankers,phase_2_air_ground:3:air+ground,phase_3_full_triage:3:full triage"
+```
+
+The timelapse renderer's v0.5 flags: `--perimeter <geojson>` overlays the official
+perimeter (cyan dashed); `--cities "Name,lon,lat;…"` drops labelled place markers on the
+GIS map for orientation.

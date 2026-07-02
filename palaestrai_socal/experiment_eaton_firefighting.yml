@@ -1,5 +1,7 @@
 # =============================================================================
-# EATON FIRE -- v0.4 "FULL-BLOWN FIREFIGHTING" experiment (FOUR phases).
+# EATON FIRE -- v0.5 "FULL-BLOWN FIREFIGHTING" experiment (FOUR phases).
+# Updated for v0.5 spatial wind integration: calibrated grid 130x182, spatial
+# perimeter-informed wind field (base_speed=14, boundary_gain=0.3).
 #
 # Built on experiment_eaton_local_ab.yml: the SAME fine ~50 m Eaton-Canyon
 # scenario, IDENTICAL seeding (seed: 47), bounds, raster (222x184), wind
@@ -43,7 +45,7 @@
 #   env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
 #     palaestrai_socal/experiment_eaton_firefighting.yml
 # =============================================================================
-uid: socal_v04_eaton_firefighting
+uid: socal_v05_eaton_firefighting
 seed: 47
 version: 3.5.9
 
@@ -56,9 +58,9 @@ schedule:
             name: palaestrai_socal.gis_world_env:GisWorldEnvironment
             uid: gis_world
             params:
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
               use_real_dem: true
               env_step_min: 60.0
               max_steps: 60
@@ -103,18 +105,23 @@ schedule:
           muscle:
             name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
             params:
-              ignition_points: [[-118.09358, 34.18604]]
+              ignition_points: [[-118.0935761, 34.1860422]]
               ignition_step: 1
               env_step_min: 60.0
               dt_cma_min: 5.0
               t_burn_steps: 6
               kappa: 1.5
-              dead_fuel_moisture: 0.05
+              dead_fuel_moisture: 0.13
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
+              perimeter_path: data/perimeters/eaton_perimeter.geojson
+              base_speed: 14
+              boundary_gain: 0.3
+              fuel_reclass: false
+              containment_margin: 2
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -138,9 +145,9 @@ schedule:
               env_step_min: 60.0
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -158,9 +165,9 @@ schedule:
             name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
             params:
               grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -219,9 +226,9 @@ schedule:
             name: palaestrai_socal.gis_world_env:GisWorldEnvironment
             uid: gis_world
             params:
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
               use_real_dem: true
               env_step_min: 60.0
               max_steps: 60
@@ -266,18 +273,23 @@ schedule:
           muscle:
             name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
             params:
-              ignition_points: [[-118.09358, 34.18604]]
+              ignition_points: [[-118.0935761, 34.1860422]]
               ignition_step: 1
               env_step_min: 60.0
               dt_cma_min: 5.0
               t_burn_steps: 6
               kappa: 1.5
-              dead_fuel_moisture: 0.05
+              dead_fuel_moisture: 0.13
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
+              perimeter_path: data/perimeters/eaton_perimeter.geojson
+              base_speed: 14
+              boundary_gain: 0.3
+              fuel_reclass: false
+              containment_margin: 2
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -301,9 +313,9 @@ schedule:
               env_step_min: 60.0
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -321,9 +333,9 @@ schedule:
             name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
             params:
               grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -384,9 +396,9 @@ schedule:
             name: palaestrai_socal.gis_world_env:GisWorldEnvironment
             uid: gis_world
             params:
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
               use_real_dem: true
               env_step_min: 60.0
               max_steps: 60
@@ -431,18 +443,23 @@ schedule:
           muscle:
             name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
             params:
-              ignition_points: [[-118.09358, 34.18604]]
+              ignition_points: [[-118.0935761, 34.1860422]]
               ignition_step: 1
               env_step_min: 60.0
               dt_cma_min: 5.0
               t_burn_steps: 6
               kappa: 1.5
-              dead_fuel_moisture: 0.05
+              dead_fuel_moisture: 0.13
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
+              perimeter_path: data/perimeters/eaton_perimeter.geojson
+              base_speed: 14
+              boundary_gain: 0.3
+              fuel_reclass: false
+              containment_margin: 2
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -469,9 +486,9 @@ schedule:
               env_step_min: 60.0
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -490,9 +507,9 @@ schedule:
             name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
             params:
               grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -553,9 +570,9 @@ schedule:
             name: palaestrai_socal.gis_world_env:GisWorldEnvironment
             uid: gis_world
             params:
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
               use_real_dem: true
               env_step_min: 60.0
               max_steps: 60
@@ -600,18 +617,23 @@ schedule:
           muscle:
             name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
             params:
-              ignition_points: [[-118.09358, 34.18604]]
+              ignition_points: [[-118.0935761, 34.1860422]]
               ignition_step: 1
               env_step_min: 60.0
               dt_cma_min: 5.0
               t_burn_steps: 6
               kappa: 1.5
-              dead_fuel_moisture: 0.05
+              dead_fuel_moisture: 0.13
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
+              perimeter_path: data/perimeters/eaton_perimeter.geojson
+              base_speed: 14
+              boundary_gain: 0.3
+              fuel_reclass: false
+              containment_margin: 2
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -640,9 +662,9 @@ schedule:
               env_step_min: 60.0
               wind_speed: 8.0
               wind_dir_deg: 45.0
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
@@ -661,9 +683,9 @@ schedule:
             name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
             params:
               grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 222
-              raster_ncols: 184
-              bounds: [-118.14358, 34.13604, -118.04358, 34.23604]
+              raster_nrows: 130
+              raster_ncols: 182
+              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
             name: palaestrai.agent.dummy_objective:DummyObjective
             params: {}
