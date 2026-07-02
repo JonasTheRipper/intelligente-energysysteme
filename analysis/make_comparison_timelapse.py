@@ -82,12 +82,17 @@ def _fire_cmap():
     reads THROUGH the fire/suppression layers (handoff requirement). Burning
     stays the most opaque (it is the live front); burned-out is the most
     translucent so the terrain under the scar is clearly visible.
+
+    v0.6: alphas are nudged up slightly. The real Esri satellite basemap is
+    darker and busier than the pale synthetic terrain the v0.5 alphas were
+    tuned against, so the fire/scar layers need a touch more opacity to remain
+    the clear focal content over urban/mountain imagery.
     """
-    cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.30, 0.0, 0.74),
-                           (0.16, 0.16, 0.16, 0.42),
-                           (0.96, 0.36, 0.55, 0.70),
-                           (0.20, 0.45, 0.85, 0.68),
-                           (0.55, 0.36, 0.18, 0.74)])
+    cmap = ListedColormap([(0, 0, 0, 0), (1.0, 0.30, 0.0, 0.85),
+                           (0.14, 0.14, 0.14, 0.55),
+                           (0.96, 0.36, 0.55, 0.80),
+                           (0.20, 0.45, 0.85, 0.72),
+                           (0.55, 0.36, 0.18, 0.82)])
     norm = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5], cmap.N)
     return cmap, norm
 
@@ -208,19 +213,47 @@ def _draw_city_labels(ax, cities, extent):
         ])
 
 
-def _draw_map(ax, meta, title, perimeter_polys=None, cities=None):
-    """Static basemap (hillshaded terrain) + an empty fire raster; return im."""
-    extent = meta["extent"]
+# module-level basemap cache so we fetch satellite tiles once per extent even
+# when the same extent is drawn on several map rows.
+_SAT_CACHE: dict = {}
+
+
+def _basemap_rgb(meta, use_satellite=True):
+    """Return the RGB backdrop for a map row.
+
+    v0.6: prefer a real Esri World Imagery satellite mosaic (shows the coastline,
+    urban street grid, canyons -- fixes the v0.5 'LA basin looks like ocean'
+    problem and the missing-landmark problem). Falls back to the v0.5 synthetic
+    hillshade if tiles can't be fetched (offline).
+    """
+    extent = tuple(meta["extent"])
+    if use_satellite:
+        if extent in _SAT_CACHE:
+            return _SAT_CACHE[extent]
+        try:
+            from analysis.satellite_basemap import satellite_rgb
+            rgb = satellite_rgb(list(extent), with_labels=True)
+            _SAT_CACHE[extent] = rgb
+            return rgb
+        except Exception as e:  # offline / tile server down
+            print(f"[compare] satellite basemap unavailable ({e}); "
+                  f"falling back to synthetic hillshade")
     dem = meta["dem"]
     delta_m = meta["delta_m"]
-    ocean_mask = (dem <= 0.0)
-    topo_rgb = _topo_basemap_muted(dem, delta_m, ocean_mask=ocean_mask)
-    ax.imshow(topo_rgb, origin="upper", extent=extent, zorder=0,
-              interpolation="bilinear")
+    return _topo_basemap_muted(dem, delta_m, ocean_mask=(dem <= 0.0))
+
+
+def _draw_map(ax, meta, title, perimeter_polys=None, cities=None,
+              use_satellite=True):
+    """Static basemap (satellite imagery) + an empty fire raster; return im."""
+    extent = meta["extent"]
+    base_rgb = _basemap_rgb(meta, use_satellite=use_satellite)
+    ax.imshow(base_rgb, origin="upper", extent=extent, zorder=0,
+              interpolation="bilinear", aspect="auto")
     cmap, norm = _fire_cmap()
     fire_im = ax.imshow(np.zeros((2, 2), dtype=np.int8), cmap=cmap, norm=norm,
                         origin="upper", extent=extent, zorder=3,
-                        interpolation="nearest")
+                        interpolation="nearest", aspect="auto")
     # v0.5: static orientation overlays (real perimeter + place names).
     _draw_real_perimeter(ax, perimeter_polys, extent)
     _draw_city_labels(ax, cities, extent)
@@ -339,13 +372,38 @@ def render_comparison(
     map_span = nrows // nP       # rows per map
     met_span = nrows // 4        # rows per metric axis
 
-    # v0.5: taller rows + a wider MAP column so California terrain reads clearly.
-    fig_h = max(8.2, 3.4 * nP + 1.1)
-    fig = plt.figure(figsize=(17.5, fig_h))
+    # v0.6: size the figure so each satellite map row fills its rectangle with
+    # little whitespace. The fires are wide-and-short (lon span >> lat span), so
+    # we (a) give the map column a much larger width share and (b) make each row
+    # only as tall as the map's aspect needs. We approximate the per-row map
+    # aspect (width/height) from the extent, accounting for the cos(lat)
+    # longitude foreshortening, then set the figure height from it.
+    minlon, maxlon, minlat, maxlat = extent
+    midlat = 0.5 * (minlat + maxlat)
+    map_w_deg = (maxlon - minlon) * math.cos(math.radians(midlat))
+    map_h_deg = (maxlat - minlat)
+    map_aspect = max(0.6, map_w_deg / max(map_h_deg, 1e-6))  # width / height
+
+    # left (map) column width vs right (metrics) column width, in inches.
+    map_col_w = 12.6
+    met_col_w = 5.2
+    fig_w = map_col_w + met_col_w
+    # Ideal row height to show the map at true aspect would be map_col_w /
+    # map_aspect, but with nP rows stacked that gets very tall for wide-short
+    # fires. Cap the per-row height so the whole figure stays reasonable; the
+    # map uses aspect='auto' so a mild vertical stretch is acceptable and still
+    # eliminates the big v0.5 whitespace bands above/below each map.
+    row_map_h = min(map_col_w / map_aspect, 4.3)
+    row_map_h = max(row_map_h, 3.0)
+    # small inter-row gap; total height driven by the map rows (metrics reflow)
+    row_gap = 0.5
+    fig_h = max(6.0, nP * row_map_h + (nP - 1) * row_gap + 1.5)
+    fig = plt.figure(figsize=(fig_w, fig_h))
+    hspace = row_gap / max(row_map_h, 1e-6) * 1.15
     gs = fig.add_gridspec(
-        nrows, 2, width_ratios=[1.72, 1.0],
-        hspace=1.15, wspace=0.19,
-        left=0.05, right=0.986, top=0.92, bottom=0.06,
+        nrows, 2, width_ratios=[map_col_w, met_col_w],
+        hspace=hspace, wspace=0.16,
+        left=0.045, right=0.988, top=0.93, bottom=0.055,
     )
 
     map_axes = []
@@ -401,6 +459,11 @@ def render_comparison(
     fig.suptitle(
         title or "SoCal Eaton Fire — firefighter response comparison",
         fontsize=15, fontweight="bold", y=0.975)
+
+    # v0.6: attribution for the Esri World Imagery basemap (terms of use).
+    fig.text(0.045, 0.012,
+             "Basemap imagery: Esri, Maxar, Earthstar Geographics",
+             fontsize=6.5, color="#555555", ha="left", va="bottom")
 
     # --- metric axes scaffolding: one line per phase ----------------------
     def _setup_axis(ax, key, ylabel, ttl, ylim_keys=None):

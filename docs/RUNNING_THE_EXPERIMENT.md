@@ -418,3 +418,12 @@ python analysis/grid_metrics_report.py --store "$STORE_PAL" \
 The timelapse renderer's v0.5 flags: `--perimeter <geojson>` overlays the official
 perimeter (cyan dashed); `--cities "Name,lon,lat;…"` drops labelled place markers on the
 GIS map for orientation.
+
+**v0.6 satellite basemap.** The comparison timelapse now draws each map row over a real
+**Esri World Imagery** satellite mosaic (`analysis/satellite_basemap.py`) instead of the
+synthetic hillshade, so the urban street grid, place names and the real Pacific coastline
+are visible. Tiles need outbound HTTPS to `server.arcgisonline.com` on the first render and
+are then disk-cached under `data/basemap_cache/`; if they can't be fetched (offline) the
+renderer transparently falls back to the v0.5 hillshade. Imagery is attributed on the
+figure ("Basemap imagery: Esri, Maxar, Earthstar Geographics"). No extra flags are needed —
+the satellite base is on by default.

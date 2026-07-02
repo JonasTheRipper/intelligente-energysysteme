@@ -3,6 +3,41 @@
 All notable changes to the **SoCal Wildfires — Grid Co-Simulation** testbed.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [v0.6] — 2026-07-02
+
+**Timelapse presentation rework** — the firefighter-response comparison timelapse now
+renders over a **real satellite basemap** and fills its layout with far less whitespace.
+Simulation results, calibration, the CA kernel and all experiment configs are
+**unchanged** — this release only touches the `analysis/` visualisation code.
+
+### Added
+- **Satellite basemap** (`analysis/satellite_basemap.py`): fetches and stitches public
+  **Esri World Imagery** XYZ tiles (no API key), reprojects Web-Mercator → PlateCarree
+  to align with the fire raster, and optionally overlays roads/place labels from Esri's
+  reference layer. `satellite_rgb(extent, px_target=1600, with_labels=True)` returns an
+  `(H, W, 3)` float RGB array. Tiles are disk-cached under `data/basemap_cache/`.
+  Attribution ("Basemap imagery: Esri, Maxar, Earthstar Geographics") is printed on the
+  figure per the imagery terms of use.
+
+### Changed
+- **`analysis/make_comparison_timelapse.py`**: the map rows now draw the satellite
+  mosaic instead of the synthetic hillshade (`_basemap_rgb`, `_draw_map`). This fixes
+  the v0.5 issues the reviewer flagged: the LA basin no longer looks like open ocean
+  (the *real* Pacific coastline shows for Palisades), and urban street grids + city
+  names are now visible so the terrain is readable by non-locals. If tiles can't be
+  fetched the renderer transparently falls back to the v0.5 hillshade.
+- **Figure geometry** re-tuned so each wide-and-short fire map fills its column
+  (`aspect="auto"`, wider map column, per-row height capped) — the large empty bands
+  above/below each v0.5 map are gone.
+- **Fire/scar overlay opacity** (`_fire_cmap`) nudged up so the burn front, retardant
+  lines and burned scar stay the clear focal content over the darker, busier satellite
+  imagery.
+
+### Dependencies
+- Added `requests` and `Pillow` to `requirements.txt` (tile fetch + mosaic). Both were
+  already present transitively; now pinned explicitly. No new heavy GIS deps
+  (`contextily`/`rasterio` are **not** required).
+
 ## [v0.5] — 2026-07-02
 
 **Real-fire calibration** — the no-firefighting baseline is now calibrated to the
