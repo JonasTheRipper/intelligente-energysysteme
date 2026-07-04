@@ -374,3 +374,77 @@ def read_run(
         "intertie_is_proxy": intertie_is_proxy,
     }
     return snaps, meta
+
+
+def read_agent_objectives(
+    store_uri: str,
+    agent_name: str,
+    phase_uid: Optional[str] = None,
+    phase_index: Optional[int] = None,
+) -> List[dict]:
+    """Read an agent's per-decision objective (reward) trace from the store.
+
+    Returns ``[{"episode": int, "objective": float, "done": bool,
+    "grid_tick": Optional[int]}, ...]`` in decision order for the named agent,
+    optionally restricted to a single phase (via ``phase_uid`` or
+    ``phase_index``). Used by :mod:`analysis.drl_firefighter_report` to plot the
+    DRL firefighter's SAIDI-reward learning curve across training/eval episodes.
+
+    palaestrAI stores one ``muscle_actions`` row per agent decision; the
+    ``objective`` column is the scalar the agent's Objective returned that step
+    (for the DRL firefighter, ``-delta_saidi / SAIDI_SCALE``). Phase filtering
+    joins ``agents.experiment_run_phase_id -> experiment_run_phases`` -- a real
+    filter, so multi-phase stores return only the requested phase's rows.
+    """
+    con, ph = _connect(store_uri)
+    try:
+        params: List = [agent_name]
+        where = f"a.name = {ph}"
+        join = ""
+        if phase_uid is not None or phase_index is not None:
+            join = (
+                "JOIN experiment_run_phases p "
+                "ON p.id = a.experiment_run_phase_id "
+            )
+            if phase_uid is not None:
+                where += f" AND p.uid = {ph}"
+                params.append(phase_uid)
+            else:
+                where += f" AND p.number = {ph}"
+                params.append(int(phase_index))
+        q = (
+            "SELECT ma.episode, ma.objective, ma.done, ma.simtimes "
+            "FROM muscle_actions ma "
+            "JOIN agents a ON a.id = ma.agent_id "
+            f"{join}"
+            f"WHERE {where} "
+            "ORDER BY ma.id"
+        )
+        cur = con.cursor()
+        cur.execute(q, tuple(params))
+        rows = cur.fetchall()
+    finally:
+        con.close()
+
+    out: List[dict] = []
+    for episode, objective, done, simtimes in rows:
+        grid_tick: Optional[int] = None
+        payload = (
+            json.loads(simtimes) if isinstance(simtimes, str) else simtimes
+        )
+        if isinstance(payload, dict):
+            grid = payload.get("socal_grid") or {}
+            t = grid.get("simtime_ticks")
+            if t is not None:
+                grid_tick = int(t)
+        out.append(
+            {
+                "episode": int(episode) if episode is not None else 0,
+                "objective": (
+                    float(objective) if objective is not None else float("nan")
+                ),
+                "done": bool(done),
+                "grid_tick": grid_tick,
+            }
+        )
+    return out

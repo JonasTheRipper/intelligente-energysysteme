@@ -28,12 +28,20 @@ if ROOT not in sys.path:
 _SLOW_MODULES = {
     "test_damage_mapper", "test_palaestrai_env", "test_midas_steps",
     "test_gis_world_env", "test_store_render",
+    # v0.7 DRL firefighter: touch palaestrai/harl/torch.
+    "test_firefighter_drl_agent",
 }
 _UNIT_MODULES = {
     "test_cma", "test_postgis", "test_gis",
     "test_spaces", "test_grid_kpis", "test_wildfire_agent",
     "test_damage_agent",
+    # v0.7 DRL firefighter: numpy-only contract + objective tests.
+    "test_firefighter_drl", "test_saidi_objective",
 }
+# test_harvest_teacher_transitions is deliberately mixed: its payload-decoding
+# helpers are auto-marked ``unit`` here, while its live-store end-to-end tests
+# carry a ``slow`` marker in-module (and skip when the store is unreachable).
+_UNIT_MODULES.add("test_harvest_teacher_transitions")
 
 
 def pytest_collection_modifyitems(config, items):
