@@ -17,11 +17,38 @@ object-cell frame :mod:`palaestrai_socal.agents._memory_compat` produces once
 the agent also subscribes to grid rasters.
 """
 
+import sys
+import types
+
 import numpy as np
 import pandas as pd
 import pytest
 
-from palaestrai_socal.agents.saidi_objective import (
+# ``saidi_objective`` subclasses ``palaestrai.agent.objective.Objective``, so
+# importing it needs palaestrai -- which the lightweight CI ``unit`` stage does
+# not install, turning this whole module into a collection error. The reward
+# arithmetic under test is numpy-only, so stand in a minimal base class instead
+# of losing those tests. Nothing else is faked, deliberately: neither
+# ``palaestrai.types`` nor ``palaestrai.agent.memory`` resolves, so the
+# real-Memory section below still skips itself and other modules' availability
+# probes still see palaestrai as absent.
+try:  # pragma: no cover - availability probe
+    import palaestrai.agent.objective  # noqa: F401
+except ImportError:
+    _agent_mod = types.ModuleType("palaestrai.agent")
+    _objective_mod = types.ModuleType("palaestrai.agent.objective")
+
+    class _StubObjective:
+        def __init__(self, params=None):
+            self.params = params
+
+    _objective_mod.Objective = _StubObjective
+    _agent_mod.objective = _objective_mod
+    sys.modules.setdefault("palaestrai", types.ModuleType("palaestrai"))
+    sys.modules["palaestrai.agent"] = _agent_mod
+    sys.modules["palaestrai.agent.objective"] = _objective_mod
+
+from palaestrai_socal.agents.saidi_objective import (  # noqa: E402
     CUSTOMERS_PER_MW, SaidiObjective,
 )
 
