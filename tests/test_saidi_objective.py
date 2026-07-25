@@ -109,3 +109,40 @@ def test_no_load_sensors_returns_zero():
     obj = SaidiObjective(params={"base_served_mw": 1.0})
     readings = [_Reading("Powergrid-0.0-bus-0.vm_pu", np.array([1.0]))]
     assert obj.internal_reward(_Memory(readings)) == 0.0
+
+
+# -- palaestrAI loader construction contract -------------------------------
+def test_kwargs_construction_matches_loader():
+    """``load_with_params(module, params)`` calls ``Class(**params)``.
+
+    A YAML ``params:`` block is therefore unpacked as **keyword arguments**
+    rather than handed over as a single dict, so the objective must accept both
+    shapes and build an identical reward function from either. Constructing
+    with kwargs used to raise ``TypeError: __init__() got an unexpected keyword
+    argument 'scale'``, which killed every phase at agent setup.
+    """
+    # verbatim from experiment_eaton_firefighting.yml's objective params.
+    params = {"scale": 60.0, "base_served_mw": 1.0, "dt_min": 60.0}
+    shed = _Memory(_loads(0.5))
+
+    from_loader = SaidiObjective(**params)     # what the loader does
+    from_dict = SaidiObjective(params=params)  # direct construction
+
+    # guard against a vacuous 0.0 == 0.0 comparison.
+    assert from_loader.internal_reward(shed) < 0.0
+    assert from_loader.internal_reward(shed) == from_dict.internal_reward(shed)
+
+    # every keyword must actually be wired through, not silently ignored.
+    tuned = {"scale": 120.0, "base_served_mw": 2.0, "dt_min": 30.0}
+    assert (
+        SaidiObjective(**tuned).internal_reward(shed)
+        == SaidiObjective(params=tuned).internal_reward(shed)
+        != from_loader.internal_reward(shed)
+    )
+
+    # and the no-argument form still yields the documented defaults.
+    assert (
+        SaidiObjective().internal_reward(shed)
+        == SaidiObjective(params={}).internal_reward(shed)
+        == from_loader.internal_reward(shed)
+    )
