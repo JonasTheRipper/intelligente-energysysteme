@@ -53,7 +53,12 @@ _ROOT = os.path.dirname(os.path.dirname(_HERE))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+from palaestrai_socal.agents import _memory_compat  # noqa: E402
 from palaestrai_socal.agents import firefighter_drl as drl  # noqa: E402
+
+# The Learner process reads memory.tail(1) too, and it is a *separate* process
+# from the RolloutWorker, so it needs its own install().
+_memory_compat.install()
 
 
 class FirefighterSacBrain(SACBrain):

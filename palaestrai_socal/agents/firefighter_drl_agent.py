@@ -67,6 +67,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from palaestrai_socal import spaces  # noqa: E402
+from palaestrai_socal.agents import _memory_compat  # noqa: E402
 from palaestrai_socal.agents import firefighter_drl as drl  # noqa: E402
 from palaestrai_socal.agents.damage_core import (  # noqa: E402
     coerce_to_actuator_space as _coerce,
@@ -79,6 +80,11 @@ from palaestrai_socal.agents.firefighting import (  # noqa: E402
 from palaestrai_socal.agents.firefighting.planner import (  # noqa: E402
     value_raster_from_buses,
 )
+
+# This muscle runs in the RolloutWorker process, whose _remember() tabulates the
+# firefighter's ragged grid+load sensor mix into a DataFrame. Patch before any
+# Memory is touched.
+_memory_compat.install()
 
 
 def _suffix_match(uid: str, suffix: str) -> bool:
