@@ -21,6 +21,12 @@ online reward consistent with the offline teacher transitions harvested from
 the store (which use the identical formula), so the CQL bootstrap and the SAC
 fine-tuning optimise the same quantity.
 
+``memory.tail(1).sensor_readings`` is a ``pd.DataFrame`` in real palaestrAI
+runs (and a plain list in the unit tests' fake tails), so the lookup handles
+both. For the DRL firefighter it is specifically the *one-row object-cell*
+frame produced by :mod:`palaestrai_socal.agents._memory_compat`, because that
+agent mixes grid rasters with the scalar power sensors.
+
 The reducer is stateful only in that it needs the *previous* step's served MW
 to charge a per-step delta; the running SAIDI itself cancels in the delta, so
 we track just the cumulative customer-minutes to report a normalised level.
@@ -30,6 +36,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 import numpy as np
+import pandas as pd
 
 from palaestrai.agent.objective import Objective
 
@@ -40,21 +47,86 @@ SAIDI_SCALE = 60.0
 BASE_SERVED_MW = 1.0
 
 
+def _is_load_uid(uid) -> bool:
+    """True for the grid-load power sensors we sum (``*-load-*.p_mw``)."""
+    uid = str(uid)
+    return uid.endswith(".p_mw") and "-load-" in uid
+
+
+def _first_scalar(value) -> Optional[float]:
+    """First usable float in a reading, or None if there is none.
+
+    Accepts everything the two Memory shapes can hand us: a plain number, a
+    0-d array, the ``(1,)`` array a scalar sensor carries, or a longer vector.
+    Non-numeric and non-finite cells (a uid missing from a concatenated frame
+    reads back as NaN) are reported as absent rather than poisoning the sum.
+    """
+    try:
+        flat = np.asarray(value, dtype=float).ravel()
+    except (TypeError, ValueError):
+        return None
+    if not flat.size:
+        return None
+    scalar = float(flat[0])
+    return scalar if np.isfinite(scalar) else None
+
+
 def _served_mw_from_readings(readings) -> Optional[float]:
     """Sum every ``*-load-*.p_mw`` sensor reading -> served MW (or None)."""
     total = 0.0
     found = False
     for r in readings:
         uid = getattr(r, "uid", None) or getattr(r, "sensor_id", None) or ""
-        if uid.endswith(".p_mw") and "-load-" in uid:
-            try:
-                val = np.asarray(r.value, dtype=float).ravel()
-                if val.size:
-                    total += float(val[0])
-                    found = True
-            except (TypeError, ValueError):
-                pass
+        if not _is_load_uid(uid):
+            continue
+        value = _first_scalar(getattr(r, "value", None))
+        if value is not None:
+            total += value
+            found = True
     return total if found else None
+
+
+def _served_mw_from_frame(frame: pd.DataFrame) -> Optional[float]:
+    """Sum the ``*-load-*.p_mw`` columns of a Memory frame -> served MW.
+
+    Handles both shapes ``memory.tail(1).sensor_readings`` can take: the
+    ordinary equal-length frame, whose cells are plain numbers, and the
+    one-row object-cell frame the ragged-safe shim
+    (:mod:`palaestrai_socal.agents._memory_compat`) produces when the agent
+    also subscribes to grid rasters, whose cells hold whole arrays. The most
+    recent row is used, so this stays correct if more than one is present.
+    """
+    if frame.empty:
+        return None
+    total = 0.0
+    found = False
+    for uid in frame.columns:
+        if not _is_load_uid(uid):
+            continue
+        value = _first_scalar(frame[uid].iloc[-1])
+        if value is not None:
+            total += value
+            found = True
+    return total if found else None
+
+
+def _served_mw(sensor_readings) -> Optional[float]:
+    """Served MW from either Memory representation of one step's readings.
+
+    Deliberately dispatches on type instead of testing truthiness: a real
+    ``pd.DataFrame`` raises ``ValueError: The truth value of a DataFrame is
+    ambiguous`` on ``bool()``, and iterating one yields column *names*.
+    """
+    if sensor_readings is None:
+        return None
+    if isinstance(sensor_readings, pd.DataFrame):
+        return _served_mw_from_frame(sensor_readings)
+
+    readings: List = list(sensor_readings)
+    # Memory.tail may nest readings one level deep depending on version.
+    if readings and isinstance(readings[0], (list, tuple)):
+        readings = [r for group in readings for r in group]
+    return _served_mw_from_readings(readings)
 
 
 class SaidiObjective(Objective):
@@ -112,14 +184,7 @@ class SaidiObjective(Objective):
 
     def internal_reward(self, memory, **kwargs) -> float:
         tail = memory.tail(1)
-        readings = list(getattr(tail, "sensor_readings", []) or [])
-        # Memory.tail may nest readings one level deep depending on version.
-        if readings and isinstance(readings[0], (list, tuple)):
-            flat: List = []
-            for grp in readings:
-                flat.extend(grp)
-            readings = flat
-        served = _served_mw_from_readings(readings)
+        served = _served_mw(getattr(tail, "sensor_readings", None))
         if served is None:
             # no grid-load sensors this step -> nothing to charge.
             return 0.0
