@@ -37,6 +37,9 @@ _UNIT_MODULES = {
     "test_damage_agent",
     # v0.7 DRL firefighter: numpy-only contract + objective tests.
     "test_firefighter_drl", "test_saidi_objective",
+    # Ragged-safe Memory shim. Needs palaestrai's _MuscleMemory, but skips
+    # itself when palaestrai is absent (as in the light CI unit stage).
+    "test_memory_compat",
 }
 # test_harvest_teacher_transitions is deliberately mixed: its payload-decoding
 # helpers are auto-marked ``unit`` here, while its live-store end-to-end tests
