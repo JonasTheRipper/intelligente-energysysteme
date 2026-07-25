@@ -60,8 +60,21 @@ def _served_mw_from_readings(readings) -> Optional[float]:
 class SaidiObjective(Objective):
     """Return ``-delta_saidi / scale`` from the agent's grid-load sensors.
 
-    Parameters (via ``params``)
-    ---------------------------
+    Construction
+    ------------
+    Both call styles are supported, because palaestrAI's
+    :func:`palaestrai.util.dynaloader.load_with_params` unpacks a YAML
+    ``params:`` block as **keyword arguments** (``Class(**params)``) rather
+    than handing the dict over as a single positional argument::
+
+        SaidiObjective(scale=60.0, base_served_mw=1.0, dt_min=60.0)  # loader
+        SaidiObjective(params={"scale": 60.0})                       # direct
+
+    Keys present in an explicit ``params`` dict take precedence over the
+    keyword arguments; unknown keys are passed through to the base class.
+
+    Parameters
+    ----------
     scale:
         SAIDI normalisation (default 60). Divides the per-step SAIDI delta so
         the reward magnitude is O(1) for the SAC/CQL critics.
@@ -74,14 +87,25 @@ class SaidiObjective(Objective):
         Default 60 (the testbed's ``env_step_min``).
     """
 
-    def __init__(self, params: Optional[dict] = None):
-        params = {} if params is None else params
-        super().__init__(params=params)
-        self._scale = float(params.get("scale", SAIDI_SCALE))
-        self._base_served_mw = float(
-            params.get("base_served_mw", BASE_SERVED_MW)
-        )
-        self._dt_min = float(params.get("dt_min", 60.0))
+    def __init__(
+        self,
+        params: Optional[dict] = None,
+        *,
+        scale: float = SAIDI_SCALE,
+        base_served_mw: float = BASE_SERVED_MW,
+        dt_min: float = 60.0,
+    ):
+        settings = {
+            "scale": scale,
+            "base_served_mw": base_served_mw,
+            "dt_min": dt_min,
+        }
+        if params:
+            settings.update(params)
+        super().__init__(params=settings)
+        self._scale = float(settings["scale"])
+        self._base_served_mw = float(settings["base_served_mw"])
+        self._dt_min = float(settings["dt_min"])
         self._total_customers = (
             max(1.0, self._base_served_mw) * CUSTOMERS_PER_MW
         )
