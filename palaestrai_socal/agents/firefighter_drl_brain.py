@@ -199,10 +199,17 @@ class FirefighterSacBrain(SACBrain):
         n = obs.shape[0]
         # 5-tuples in load_transitions_into_buffer's layout:
         #   (obs, action, next_obs, reward, done).
+        #
+        # The action must be a (1,) vector, not a 0-d scalar: the online path
+        # stores what LearningFirefighterMuscle returns
+        # (``np.array([act_id], dtype=np.float64)``), and SACBrain.update()
+        # batches offline and online transitions together through a single
+        # ``np.array(actions)``. A 0-d/1-d mix there is ragged and raises
+        # "inhomogeneous shape", killing every update once the buffer warms up.
         transitions = (
             (
                 obs[i],
-                np.asarray(actions[i]),
+                np.asarray(actions[i], dtype=np.float64).reshape(1),
                 next_obs[i],
                 float(rewards[i]),
                 bool(dones[i]),

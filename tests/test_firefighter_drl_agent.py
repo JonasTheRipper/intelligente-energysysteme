@@ -209,3 +209,62 @@ def test_served_mw_sums_load_sensors_only():
         )
     ]
     assert m._served_mw(only_state) is None
+
+
+# -- offline/online action-shape contract ----------------------------------
+# SACBrain.update() batches offline (CQL bootstrap) and online transitions
+# together through one ``np.array(actions)``. The offline loader used to store
+# ``np.asarray(actions[i])`` off a ``.ravel()``ed array, i.e. a 0-d scalar,
+# while the muscle emits ``(1,)``. The mix is ragged, so every update after
+# ``update_after`` raised "inhomogeneous shape" and the brain never learned.
+@_needs_stack
+def test_muscle_online_action_is_1d():
+    """The online half of the contract: a (1,) float vector, never 0-d."""
+    m = _muscle()
+    _, (_, action) = m.propose_actions(_sensors(_front()), [_actuator()])
+    assert isinstance(action, np.ndarray)
+    assert action.shape == (1,)
+
+
+@_needs_stack
+def test_offline_bootstrap_action_shape_matches_online(tmp_path):
+    """Offline transitions must batch with online ones without going ragged."""
+    from palaestrai_socal.agents.firefighter_drl import OBS_DIM
+    from palaestrai_socal.agents.firefighter_drl_brain import (
+        FirefighterSacBrain,
+    )
+
+    n = 4
+    npz = tmp_path / "teacher.npz"
+    np.savez(
+        npz,
+        obs=np.zeros((n, OBS_DIM), dtype=np.float32),
+        # int64 1-D, exactly as harvest_teacher_transitions writes it.
+        actions=np.arange(n, dtype=np.int64),
+        next_obs=np.zeros((n, OBS_DIM), dtype=np.float32),
+        rewards=np.zeros(n, dtype=np.float32),
+        dones=np.zeros(n, dtype=bool),
+    )
+
+    brain = FirefighterSacBrain(offline_npz=str(npz))
+    captured = []
+
+    def _capture(transitions):
+        captured.extend(transitions)
+        return len(captured)
+
+    brain.load_transitions_into_buffer = _capture
+    assert brain._load_offline() == n
+
+    offline_actions = [t[1] for t in captured]
+    assert all(a.shape == (1,) for a in offline_actions)
+    # values survive the reshape, so the bootstrap still teaches the doctrine.
+    assert [float(a[0]) for a in offline_actions] == [0.0, 1.0, 2.0, 3.0]
+
+    # the operation that actually crashed: one batch spanning both sources.
+    m = _muscle()
+    _, (_, online_action) = m.propose_actions(
+        _sensors(_front()), [_actuator()]
+    )
+    batch = np.array(offline_actions + [online_action], dtype=np.float32)
+    assert batch.shape == (n + 1, 1)
