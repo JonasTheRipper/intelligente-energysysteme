@@ -3,6 +3,106 @@
 All notable changes to the **SoCal Wildfires — Grid Co-Simulation** testbed.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [v0.7] — 2026-07-26
+
+**The learning firefighter** — the testbed gets its first *learning* agent: a SAC/CQL
+firefighter that is bootstrapped from the scripted v0.4/v0.5 incident commander (now the
+*teacher*) and then fine-tuned online. The scripted responder, the CA kernel and the
+calibrated v0.5 baselines are **unchanged** — the learner is a separate agent block that
+reuses the same `gis.cell_mutations` control surface. Architecture:
+[`docs/AGENTS.md`](docs/AGENTS.md); operational how-to:
+[`docs/RUNNING_THE_EXPERIMENT.md`](docs/RUNNING_THE_EXPERIMENT.md) §9.
+
+### Added
+- **DRL firefighter agent**: `agents/firefighter_drl_brain.py`
+  (`FirefighterSacBrain`, a hARL `SACBrain` subclass) and
+  `agents/firefighter_drl_agent.py` (`LearningFirefighterMuscle`). The policy selects a
+  *doctrine*, which is then executed by the same `IncidentCommand` machinery the scripted
+  firefighter uses and gated by resource availability, so the learner cannot invent
+  physically impossible suppression.
+- **`agents/firefighter_drl.py` — the shared `Box(17)` / `Discrete(4)` contract**
+  (numpy-only, imported by both the online muscle and the offline harvester so the two
+  cannot drift): a compact 17-feature observation (fire fractions, front geometry, mean
+  slope, wind trig, served MW, SAIDI delta, step fraction) rather than a raster flatten,
+  and 4 tactics (`ACT_NOOP`, `ACT_INDIRECT`, `ACT_DIRECT`, `ACT_TRIAGE`).
+- **`agents/saidi_objective.py` (`SaidiObjective`)** — `reward = -delta_saidi / scale`,
+  always ≤ 0 and exactly 0 when load is fully served, computed from the agent's
+  `*-load-*.p_mw` sensors (`CUSTOMERS_PER_MW = 200.0`).
+- **Offline teacher-transition harvest** (`agents/harvest_teacher_transitions.py`):
+  reads the scripted firefighting phases back out of a v0.5 store and writes one `.npz`
+  per fire — `obs` (N, 17) float32, `actions` (N,) int64, `rewards`, `next_obs`, `dones`,
+  plus a `meta` record of the source store, phases and contract constants. Both harvested
+  files are committed (`data/offline/{eaton,palisades}_teacher_all.npz`).
+  `FirefighterSacBrain(offline_npz=…)` loads them into the replay buffer during setup and
+  auto-enables the **CQL(H)** conservative regulariser, so the policy is behaviour-cloned
+  before a single online step.
+- **`agents/_memory_compat.py`** — a ragged-safe shim for palaestrAI's
+  `_MuscleMemory._infos_to_df` (see *Fixed*).
+- **Two new phases** in `experiment_eaton_firefighting.yml` — `phase_4_drl_train` and
+  `phase_5_drl_test` — so the learner trains and is evaluated in the same store as the
+  four scripted phases it is measured against.
+- **Two production long-run experiments**:
+  `experiment_eaton_firefighting_drl_long.yml` and
+  `experiment_palisades_firefighting_drl_long.yml` (`episodes: 400`,
+  `evaluate_every: 20`, `cql_alpha: 1.0`, `update_after: 1000`, `start_steps: 1000`,
+  `use_real_dem: true`, each pointed at its own harvested `.npz`). Both stop early via
+  `AgentObjectiveTerminationCondition` on the firefighter's `brain_avg30: -0.0002`.
+- **`analysis/drl_firefighter_report.py`** — store-only report comparing the learned
+  `phase_5_drl_test` against the scripted baseline phase (acres, SAIDI) plus the training
+  reward curve; backed by the new `store_readers.read_agent_objectives()`.
+- **+55 tests** across `tests/test_firefighter_drl{,_agent}.py`,
+  `test_harvest_teacher_transitions.py`, `test_saidi_objective.py` and
+  `test_memory_compat.py` (**235 passed, 4 skipped**; the skips are environmental —
+  absent DEM cache, absent v0.5 store, missing MIDAS CSVs).
+
+### Fixed
+- **`SaidiObjective` loader contract** — palaestrAI's `load_with_params(module, params)`
+  calls `Class(**params)`, so the constructor now accepts its YAML `params:` block either
+  as a dict *or* unpacked as keyword arguments.
+- **Ragged sensor mixes crashed palaestrAI's Memory.** `_infos_to_df` tabulates one step's
+  readings into a *rectangular* `DataFrame`, assuming every sensor flattens to the same
+  length. The DRL firefighter is the first agent to break that assumption — it mixes large
+  grid rasters (`gis.cell_state` ≈ 23,660 elements) with scalar `*-load-*.p_mw` — raising
+  `ValueError: All arrays must be of the same length`. The crash is *inside* palaestrAI and
+  cannot be dodged by trimming our own subscription, because `rollout_worker` stores
+  `request.sensors` before the per-agent `Filter` runs. `_memory_compat.install()` keeps the
+  equal-length path byte-identical to upstream and falls back to a one-row object-cell frame
+  only when columns are ragged. It is **idempotent and installed in two processes** —
+  RolloutWorker *and* Learner — because palaestrAI runs them as separate OS processes that
+  hit the ragged frame at different call sites.
+- **`SaidiObjective.internal_reward` on real Memory rows.** `Memory.tail(1).sensor_readings`
+  is a `pd.DataFrame`, not a list; the previous `list(readings or [])` both raised
+  *truth value of a DataFrame is ambiguous* and, without the `or`, would have iterated column
+  *names*. It now type-dispatches, and also handles the one-row object-cell frame the shim
+  produces.
+- **Offline/online action-shape mismatch in the CQL bootstrap.** The muscle emits
+  `np.array([act_id])` — shape `(1,)` — while the offline loader stored a 0-d scalar.
+  `SACBrain.update()` batches both sources through a single `np.array(actions)`, so once
+  `update_after` was passed that array was ragged and every update raised
+  *inhomogeneous shape*. hARL logs the failure and continues, so the symptom was a
+  firefighter that trained without ever learning. Offline actions are now reshaped to `(1,)`,
+  and **both halves of the contract are pinned** by
+  `test_muscle_online_action_is_1d` and
+  `test_offline_bootstrap_action_shape_matches_online` (the latter asserts the actual
+  crashing operation — one batch spanning both sources — succeeds).
+
+### Verification
+- The six-phase Eaton experiment (`phase_0_no_ff` → `phase_5_drl_test`) ran end-to-end to a
+  clean exit with zero error signatures. Evidence the learner actually trained (rather than
+  merely not erroring): the firefighter dumps 3 brain states in each scripted phase but 16 in
+  `phase_4_drl_train` and 12 in `phase_5_drl_test`, i.e. the SAC/CQL update fired and the
+  trained brain transferred into the evaluation phase.
+- **This was a short pipeline smoke run on the synthetic-terrain fallback, not a real-DEM
+  result.** The DEM cache was absent, so `gis_world_env` degraded to synthetic elevation as
+  designed. It validates the pipeline — it caught the action-shape defect above — but its
+  SAIDI figures are **not** metric-comparable to production, and two episodes cannot train a
+  policy regardless. Metric-comparable runs use the real DEM
+  (`data/dem/fetch_dem_tiles.py`, OpenTopography key required) and the long-run YAMLs.
+
+### Preserved
+- The **scripted** v0.3–v0.5 firefighter is untouched and remains the teacher; all prior
+  identity guarantees (v0.2 no-op, v0.3 retardant-line, v0.4 tactics) stay test-guarded.
+
 ## [v0.6] — 2026-07-02
 
 **Timelapse presentation rework** — the firefighter-response comparison timelapse now
