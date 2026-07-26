@@ -159,6 +159,118 @@ Two store-only renderers consume both phases:
 - `analysis/grid_metrics_report.py` — the static multi-panel PNG companion,
   annotating final deltas (acres saved, SAIDI reduction, MW preserved).
 
+## Firefighter agent (v0.7 — LEARNING, SAC/CQL)
+
+v0.7 adds the first **learning** agent in the testbed. The scripted v0.3–v0.5
+firefighter stays exactly as documented above — it becomes the *teacher*. The
+learner is a separate agent block that reuses the same `gis.cell_mutations`
+control surface:
+
+| Piece | Module |
+|-------|--------|
+| Brain (Learner process) | `agents.firefighter_drl_brain:FirefighterSacBrain` (subclasses hARL `SACBrain`) |
+| Muscle (RolloutWorker process) | `agents.firefighter_drl_agent:LearningFirefighterMuscle` |
+| Objective | `agents.saidi_objective:SaidiObjective` |
+| Shared contract (numpy-only) | `agents.firefighter_drl` |
+
+### The Box(17) / Discrete(4) contract
+
+`agents/firefighter_drl.py` is the single source of truth both the online muscle
+and the offline harvester import, so the two can never drift:
+
+* `OBS_DIM = 17` — a compact vector (burning/burned/suppressed fractions, fire
+  front geometry, mean slope, wind trig, served MW, SAIDI delta, step/max_steps),
+  **not** a raw raster flatten.
+* `N_TACTICS = 4` — the doctrine the policy selects: `ACT_NOOP=0`,
+  `ACT_INDIRECT=1`, `ACT_DIRECT=2`, `ACT_TRIAGE=3`. The chosen doctrine is then
+  executed by the *same* IncidentCommand machinery the scripted firefighter uses
+  and gated by resource availability, so the learner cannot invent physically
+  impossible suppression.
+
+**The action is stored as a `(1,)` vector, never a 0-d scalar.** The muscle
+returns `np.array([act_id], dtype=np.float64)`, and the offline loader reshapes
+each harvested action to match. This is load-bearing rather than cosmetic:
+`SACBrain.update()` batches offline and online transitions through a single
+`np.array(actions)`, so a 0-d/1-d mix is ragged and raises
+`ValueError: ... inhomogeneous shape ...`. hARL catches that and logs
+`could not update`, so the failure mode is a firefighter that trains without ever
+learning. Both halves of the contract are pinned in
+`tests/test_firefighter_drl_agent.py`
+(`test_muscle_online_action_is_1d`, `test_offline_bootstrap_action_shape_matches_online`).
+
+### `SaidiObjective` — the reward
+
+`reward = -delta_saidi / scale`, always `<= 0` and exactly `0` when load is fully
+served, computed from the agent's `*-load-*.p_mw` sensors
+(`CUSTOMERS_PER_MW = 200.0`, defaults `scale = 60.0`, `base_served_mw = 1.0`,
+`dt_min = 60.0`). Only `-load-*.p_mw` uids are summed; a missing load
+subscription yields `0.0` rather than an error.
+
+Two shapes must both work. palaestrAI's `Memory.tail(1).sensor_readings` is a
+**`pd.DataFrame`**, not a list, so the objective type-dispatches instead of doing
+`list(readings or [])` — the latter both raises
+`ValueError: The truth value of a DataFrame is ambiguous` and, without the `or`,
+would iterate column *names*. It also handles the one-row object-cell frame the
+Memory shim below produces. The objective additionally accepts its YAML
+`params:` block either as a dict or unpacked as keyword arguments, because
+palaestrAI's `load_with_params(module, params)` calls `Class(**params)`.
+
+### Ragged-safe Memory shim — installed in **two** processes
+
+`agents/_memory_compat.py` patches
+`palaestrai.agent.memory._MuscleMemory._infos_to_df`, which tabulates one step's
+sensor readings into a *rectangular* `pd.DataFrame` — one column per sensor uid,
+each `np.reshape(np.array(value), -1)`. That assumes every sensor flattens to the
+same length.
+
+The DRL firefighter is the first agent to break the assumption: it mixes large
+grid rasters (`gis.cell_state` ~23,660 elements, `gis.fuel_class`,
+`gis.elevation_m`, `gis.wind_field`) with scalar `*-load-*.p_mw` power sensors,
+so the constructor raises `ValueError: All arrays must be of the same length`.
+
+The crash is **inside palaestrAI**, not in our code, and it cannot be dodged by
+trimming our own subscription: `rollout_worker` stores `request.sensors` *before*
+the per-agent `Filter` runs. Hence the patch:
+
+* **Equal-length columns** take the upstream code path verbatim — the common case
+  stays behaviourally identical to stock palaestrAI.
+* **Ragged columns** fall back to a one-row frame whose cells hold the whole
+  arrays, built as `pd.DataFrame({uid: pd.Series([value], dtype=object)})`.
+  (`.at`-style assignment is wrong here: pandas unwraps a length-1 array into a
+  0-d scalar, which silently corrupts the scalar power sensors.)
+
+`install()` is idempotent and is called at import in **both**
+`firefighter_drl_agent.py` (RolloutWorker) and `firefighter_drl_brain.py`
+(Learner). Both are needed because palaestrAI runs them as **separate OS
+processes** — the muscle's process hits the ragged frame in
+`RolloutWorker._remember`'s debug-log `tail(1)`, and the brain's process hits it
+again in the SAC brain's `memory.tail(1).objective.item()` read. Patching only
+one leaves the other crashing. Regressions live in `tests/test_memory_compat.py`.
+
+### Offline teacher harvest (CQL bootstrap)
+
+`agents/harvest_teacher_transitions.py` reads the **scripted** firefighting phases
+back out of a v0.5 PostgreSQL store and materialises one `.npz` per fire, labelling
+each step with the doctrine the teacher effectively chose:
+
+```bash
+python -m palaestrai_socal.agents.harvest_teacher_transitions \
+    --store postgresql://.../palaestrai_eaton_v05 \
+    --out data/offline/eaton_teacher_all.npz \
+    [--phases phase_1_air,phase_2_air_ground,phase_3_full_triage]
+```
+
+Schema: `obs` (N, 17) float32, `actions` (N,) int64, `rewards` (N,) float32,
+`next_obs` (N, 17) float32, `dones` (N,) bool, plus a `meta` 0-d object array
+recording the source store, phases and contract constants. Both harvested files
+are committed: `data/offline/eaton_teacher_all.npz` and
+`data/offline/palisades_teacher_all.npz`.
+
+`FirefighterSacBrain(offline_npz=...)` loads these into the replay buffer during
+setup and auto-enables the CQL(H) conservative regulariser, so the policy is
+bootstrapped from teacher behaviour before a single online step — then fine-tuned
+online.
+
 ## Overseer-Adversary (interface-only, NOT implemented)
 
 The GUARDIAN framing has an Overseer-Adversary that chooses the hazard
@@ -177,4 +289,3 @@ another palaestrAI agent that writes the wildfire control surface:
 
 The Overseer-Adversary is documented here as the extension point; no learning
 adversary ships in v0.2.
-```

@@ -427,3 +427,96 @@ are then disk-cached under `data/basemap_cache/`; if they can't be fetched (offl
 renderer transparently falls back to the v0.5 hillshade. Imagery is attributed on the
 figure ("Basemap imagery: Esri, Maxar, Earthstar Geographics"). No extra flags are needed —
 the satellite base is on by default.
+
+---
+
+## 9. v0.7 — the learning (DRL) firefighter
+
+v0.7 keeps the scripted firefighter as the **teacher** and adds a SAC/CQL learner.
+The agent architecture — the Box(17)/Discrete(4) contract, `SaidiObjective`, the
+ragged-safe Memory shim and the offline harvest — is documented in
+[`docs/AGENTS.md`](AGENTS.md). This section is the operational recipe.
+
+### 9.1 Harvest the offline teacher transitions (already committed)
+
+The CQL bootstrap reads a `.npz` of scripted-teacher transitions. Both files are
+**committed**, so you only need this step if you want to regenerate them from your
+own v0.5 store:
+
+```bash
+python -m palaestrai_socal.agents.harvest_teacher_transitions \
+    --store postgresql://USER:PW@HOST:PORT/palaestrai_eaton_v05 \
+    --out data/offline/eaton_teacher_all.npz
+```
+
+Repeat with `palaestrai_palisades_v05` → `data/offline/palisades_teacher_all.npz`.
+
+### 9.2 The two production long-run YAMLs
+
+Each is a **single** full-budget training phase — the production counterpart of
+`phase_4_drl_train` in the six-phase `experiment_eaton_firefighting.yml`:
+
+| File | `uid` | offline npz |
+|---|---|---|
+| `palaestrai_socal/experiment_eaton_firefighting_drl_long.yml` | `socal_v07_eaton_firefighting_drl_long` | `data/offline/eaton_teacher_all.npz` |
+| `palaestrai_socal/experiment_palisades_firefighting_drl_long.yml` | `socal_v07_palisades_firefighting_drl_long` | `data/offline/palisades_teacher_all.npz` |
+
+Both share the same scenario as their scripted counterpart (real DEM, calibrated
+grid, `max_steps: 60`) and the same production hyperparameters: `episodes: 400`,
+`evaluate_every: 20`, `cql_alpha: 1.0`, `update_after: 1000`, `start_steps: 1000`.
+
+```bash
+env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
+  palaestrai_socal/experiment_eaton_firefighting_drl_long.yml
+```
+
+Give each fire its **own** database and its own `executor_bus_port`, exactly as in
+§8.3.
+
+### 9.3 Early stopping — `AgentObjectiveTerminationCondition`
+
+Rather than always burning all 400 episodes, both long runs stop early once the
+firefighter is reliably holding SAIDI near the scripted-teacher floor:
+
+```yaml
+run_config:
+  condition:
+    name: palaestrai.experiment.agent_objective_termination_condition:AgentObjectiveTerminationCondition
+    params:
+      firefighter:
+        brain_avg30: -0.0002
+```
+
+The reward is `-delta_saidi / 60`, so it is `<= 0` and `0` means "no load shed at
+all". `brain_avg30: -0.0002` therefore reads: *end the phase when the
+firefighter's rolling 30-episode mean objective rises to within 0.0002 of zero.*
+The key is the agent `name:` in the schedule (`firefighter`) — a typo there
+silently disables early stopping rather than erroring.
+
+### 9.4 Short pipeline verification, and the DEM caveat
+
+For a fast wiring check, copy `experiment_eaton_firefighting.yml`, give it a
+**distinct `uid`** (phase uids must be unique within a store), cut
+`phase_4_drl_train` to `episodes: 2`, set `evaluate_every: 1000000` (the file's
+convention for "never interrupt with an eval phase"), and point a disposable
+runtime config at a scratch database. Expect all six phases to advance through
+`phase_5_drl_test`, with non-zero `world_states`, `muscle_actions` and
+`brain_states`, and the firefighter's `brain_states` visibly stepping up in
+phases 4–5 (that step-up is the evidence the SAC update actually fired — hARL logs
+a failed update and keeps going, so "no traceback" alone proves nothing).
+
+> **Synthetic terrain is acceptable for pipeline smoke verification only — never
+> for metric comparability.** The experiments set `use_real_dem: true`, but the
+> real SRTM cache (`data/dem/*.npz`, ~71 MB) is git-ignored. If it is absent,
+> `gis_world_env.py` catches the `FileNotFoundError`, logs a warning and degrades
+> to synthetic elevation, so the run still completes. Any SAIDI or burned-area
+> number produced that way is **not** comparable to a real-DEM result, and 2
+> episodes cannot train a policy in any case. **Production runs use the real
+> DEM** — fetch it with `data/dem/fetch_dem_tiles.py` (needs an OpenTopography
+> API key) before generating results anyone will cite.
+
+Cleanup between verification attempts is the same as §3.4: one store holds one
+run, so `TRUNCATE` (or drop and recreate) the scratch database before relaunching.
+Note that palaestrAI renames its child processes to `palaestrAI[Executor]`,
+`palaestrAI[RunGovernor-n]` and similar, so a case-sensitive `pkill -f palaestrai`
+sweep will miss them and the next launch will collide on the executor bus port.
