@@ -1,0 +1,37 @@
+% CalStateLA Beamer inner theme
+\mode<presentation>
+
+\usepackage{tikz}
+\usepackage[skins]{tcolorbox}
+
+% Brand-styled list markers: gold square bullet, dark-gray dash subitem.
+\setbeamertemplate{itemize item}{\color{cslagold}\rule[0.35ex]{0.55ex}{0.55ex}}
+\setbeamertemplate{itemize subitem}{\color{csladarkgray}\textbf{--}}
+\setbeamertemplate{itemize subsubitem}{\color{cslalightgray}\textperiodcentered}
+
+\setbeamertemplate{enumerate item}{\color{cslablack}\bfseries\insertenumlabel.}
+\setbeamertemplate{enumerate subitem}{\color{csladarkgray}\insertsubenumlabel.}
+
+% Caption styling
+\setbeamertemplate{caption label separator}{:\ }
+
+% --- "Exercise" callout box (replaces the IBS Aufgabe box) ---
+% Gold title on a black frame, light panel body, soft shadow.
+\newenvironment{Exercise}{%
+  \begin{tcolorbox}[
+    enhanced,
+    title={\color{cslagold}\bfseries Exercise},
+    colback=white,
+    colframe=cslablack,
+    coltitle=cslagold,
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt,
+    drop fuzzy shadow,
+    left=6pt, right=6pt, top=4pt, bottom=4pt
+  ]%
+}{%
+  \end{tcolorbox}%
+}
+
+\mode<all>

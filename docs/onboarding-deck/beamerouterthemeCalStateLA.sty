@@ -1,0 +1,98 @@
+% CalStateLA Beamer outer theme
+% Visual identity mimicking Cal State LA (gold + black, no logo):
+%   - thin gold rule across the top of every content frame
+%   - bold black frame title with a dark-gray hairline beneath
+%   - minimal footer: gold hairline + page number (frame/total)
+%   - full-bleed black title and section pages with gold accents
+\mode<presentation>
+
+\usepackage{graphicx}
+\usepackage{tikz}
+
+% Comfortable side margins
+\setbeamersize{text margin left=0.07\paperwidth}
+\setbeamersize{text margin right=0.07\paperwidth}
+
+% --- Frame title: gold top bar + title + hairline rule ---
+\setbeamertemplate{frametitle}{%
+  \nointerlineskip%
+  \begin{beamercolorbox}[wd=\paperwidth, ht=4pt, dp=0pt]{frametitle}%
+    \color{cslagold}\rule{\paperwidth}{3.5pt}%
+  \end{beamercolorbox}%
+  \vskip6pt%
+  \begin{beamercolorbox}[wd=\paperwidth,
+      leftskip=0.07\paperwidth, rightskip=0.07\paperwidth]{frametitle}%
+    \usebeamerfont{frametitle}\usebeamercolor[fg]{frametitle}\insertframetitle%
+    \ifx\insertframesubtitle\@empty\else%
+      \par\vskip1pt%
+      {\usebeamerfont{framesubtitle}\usebeamercolor[fg]{framesubtitle}\insertframesubtitle}%
+    \fi%
+    \par\vskip2pt%
+    {\color{csladarkgray}\rule{\linewidth}{0.5pt}}%
+  \end{beamercolorbox}%
+  \vskip2pt%
+}
+
+% --- Footer: gold rule + page number / course label ---
+\setbeamertemplate{footline}{%
+  \hbox{\color{cslagold}\rule{\paperwidth}{2pt}}%
+  \vskip2pt%
+  \hbox{%
+  \begin{beamercolorbox}[wd=\paperwidth, ht=2.5ex, dp=1ex,
+      leftskip=0.07\paperwidth, rightskip=0.07\paperwidth]{footline}%
+    \usebeamerfont{footline}\color{csladarkgray}%
+    Artificial Intelligence\,\textbar\,Introduction to AI%
+    \hfill%
+    \insertframenumber\,/\,\inserttotalframenumber%
+  \end{beamercolorbox}%
+  }%
+}
+% No navigation symbols
+\setbeamertemplate{navigation symbols}{}
+
+% --- Title page: full black background, gold accents ---
+\setbeamertemplate{title page}{%
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[cslablack] (current page.south west) rectangle (current page.north east);
+    % gold rule along the top edge
+    \fill[cslagold] ([yshift=-5pt]current page.north west)
+      rectangle ([yshift=-9pt]current page.north east);
+    \node[anchor=west, text width=0.86\paperwidth, inner sep=0pt, align=left]
+      at ([xshift=0.07\paperwidth]current page.west) {%
+      \vspace{0.12\paperheight}%
+      {\usebeamerfont*{title}\color{cslagold}\bfseries%
+        \begin{minipage}{0.86\paperwidth}%
+          \fontsize{17.28}{16}\selectfont\lineskip=0pt\lineskiplimit=-\maxdimen%
+          \MakeUppercase{\inserttitle}%
+        \end{minipage}\par}%
+      \vspace{6pt}%
+      {\usebeamerfont*{subtitle}\color{white}\insertsubtitle\par}%
+      \vspace{18pt}%
+      {\usebeamerfont*{author}\color{white}\insertauthor\par}%
+      \vspace{2pt}%
+      {\usebeamerfont*{date}\color{cslalightgray}\insertdate\par}%
+      \vspace{12pt}%
+      {\color{cslagold}\rule{0.3\paperwidth}{2pt}}%
+    };
+  \end{tikzpicture}%
+}
+
+% --- Section divider page: black background, gold section title ---
+\AtBeginSection[]{%
+  \begin{frame}[plain, noframenumbering]
+    \begin{tikzpicture}[remember picture, overlay]
+      \fill[cslablack] (current page.south west) rectangle (current page.north east);
+      \fill[cslagold] ([yshift=-5pt]current page.north west)
+        rectangle ([yshift=-9pt]current page.north east);
+      \node[anchor=west, text width=0.86\paperwidth, inner sep=0pt]
+        at ([xshift=0.07\paperwidth]current page.west) {%
+        {\usebeamerfont*{title}\color{cslagold}\bfseries%
+          \MakeUppercase{\insertsectionhead}\par}%
+        \vspace{8pt}%
+        {\color{cslagold}\rule{0.35\paperwidth}{2pt}}%
+      };
+    \end{tikzpicture}%
+  \end{frame}%
+}
+
+\mode<all>

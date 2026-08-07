@@ -1,0 +1,76 @@
+% CalStateLA Beamer font theme
+% Cal State LA brand typography: Montserrat (headings) and Open Sans (body).
+% Source: https://www.calstatela.edu/brand/colors-fonts
+%
+% Engine notes:
+%   * With XeLaTeX/LuaLaTeX, Montserrat and Open Sans are loaded via fontspec
+%     when present, with graceful fallbacks (Open Sans -> Fira Sans -> Latin
+%     Modern Sans). This gives the authentic Cal State LA look.
+%   * With pdfLaTeX, the package falls back to a Helvetica-like sans
+%     (Latin Modern Sans / helvet) so the deck still compiles.
+\mode<presentation>
+
+\RequirePackage{iftex}
+
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage{helvet}
+  \renewcommand{\familydefault}{\sfdefault}
+\else
+  \usepackage{fontspec}
+  % Headings / titles: Montserrat (brand), loaded from explicit OTF files to
+  % avoid ambiguity with same-named WOFF2 files elsewhere on the font path
+  % (xdvipdfmx cannot embed WOFF2, so a by-name lookup can pick the wrong file).
+  \IfFileExists{/usr/share/fonts/opentype/montserrat/Montserrat-Regular.otf}{%
+    \setsansfont{Montserrat}[
+      Path = /usr/share/fonts/opentype/montserrat/,
+      Extension = .otf,
+      UprightFont = *-Regular,
+      BoldFont = *-Bold,
+      ItalicFont = *-Italic,
+      BoldItalicFont = *-BoldItalic,
+    ]%
+  }{%
+    \IfFontExistsTF{Open Sans}{%
+      \setsansfont{Open Sans}%
+    }{%
+      \IfFontExistsTF{Fira Sans}{\setsansfont{Fira Sans}}{}%
+    }%
+  }
+  % Body text: Open Sans (brand), loaded from explicit TTF files for the same
+  % reason; falls back to the sans family chosen above if unavailable.
+  \IfFileExists{/usr/share/fonts/truetype/open-sans/OpenSans-Regular.ttf}{%
+    \setmainfont{Open Sans}[
+      Path = /usr/share/fonts/truetype/open-sans/,
+      Extension = .ttf,
+      UprightFont = OpenSans-Regular,
+      BoldFont = OpenSans-Bold,
+      ItalicFont = OpenSans-Italic,
+      BoldItalicFont = OpenSans-BoldItalic,
+    ]%
+  }{%
+    \IfFontExistsTF{Lato}{\setmainfont{Lato}}{}%
+  }
+  \renewcommand{\familydefault}{\sfdefault}
+\fi
+
+% --- Beamer font assignments ---
+\setbeamerfont{title}{series=\bfseries, size=\LARGE}
+\setbeamerfont{subtitle}{series=\mdseries, size=\large}
+\setbeamerfont{author}{series=\mdseries, size=\small}
+\setbeamerfont{date}{series=\mdseries, size=\small}
+\setbeamerfont{institute}{series=\mdseries, size=\small}
+
+\setbeamerfont{frametitle}{series=\bfseries, size=\Large}
+\setbeamerfont{framesubtitle}{series=\mdseries, size=\normalsize}
+
+\setbeamerfont{section in toc}{series=\bfseries}
+\setbeamerfont{subsection in toc}{series=\mdseries}
+
+\setbeamerfont{footline}{series=\mdseries, size=\scriptsize}
+\setbeamerfont{caption}{series=\mdseries, size=\small}
+\setbeamerfont{caption name}{series=\bfseries}
+
+\linespread{1.15}
+
+\mode<all>

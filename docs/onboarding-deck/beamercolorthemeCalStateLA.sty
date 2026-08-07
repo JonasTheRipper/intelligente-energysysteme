@@ -1,0 +1,53 @@
+% CalStateLA Beamer color theme
+% Mimics California State University, Los Angeles brand palette.
+% Primary: Cal State LA Gold (#FFCE00), Black (#000000), Marigold (#FCB237)
+% Secondary: Golden Eagle Gold (#A18528), Dark Gray (#4A4F55), Light Gray (#8A8A8D)
+% Source: https://www.calstatela.edu/brand/colors-fonts
+\mode<presentation>
+
+\usepackage{xcolor}
+
+% --- Brand colors ---
+\definecolor{cslagold}{HTML}{FFCE00}      % Cal State LA Gold (Pantone 116c)
+\definecolor{cslamarigold}{HTML}{FCB237}  % Marigold (high-contrast gold)
+\definecolor{cslablack}{HTML}{000000}     % True Black
+\definecolor{cslaeaglegold}{HTML}{A18528} % Golden Eagle Gold (accent)
+\definecolor{csladarkgray}{HTML}{4A4F55}   % Dark Gray
+\definecolor{cslalightgray}{HTML}{8A8A8D}  % Light Gray
+\definecolor{cslatintgray}{HTML}{F2F2F2}  % Very light gray (panel backgrounds)
+
+% --- Beamer color bindings ---
+\setbeamercolor{normal text}{fg=cslablack, bg=white}
+\setbeamercolor{background canvas}{bg=white}
+\setbeamercolor{structure}{fg=cslablack}
+\setbeamercolor{alerted text}{fg=cslaeaglegold}
+
+\setbeamercolor{title}{fg=white, bg=cslablack}
+\setbeamercolor{subtitle}{fg=cslagold}
+\setbeamercolor{author}{fg=cslalightgray}
+\setbeamercolor{date}{fg=cslalightgray}
+\setbeamercolor{institute}{fg=cslalightgray}
+
+\setbeamercolor{frametitle}{fg=cslablack, bg=white}
+\setbeamercolor{framesubtitle}{fg=csladarkgray, bg=white}
+
+\setbeamercolor{itemize item}{fg=cslablack}
+\setbeamercolor{itemize subitem}{fg=csladarkgray}
+\setbeamercolor{itemize subsubitem}{fg=cslalightgray}
+\setbeamercolor{enumerate item}{fg=cslablack}
+
+\setbeamercolor{section in toc}{fg=cslablack}
+\setbeamercolor{subsection in toc}{fg=csladarkgray}
+\setbeamercolor{section in toc shaded}{fg=cslalightgray}
+
+\setbeamercolor{block title}{fg=white, bg=cslablack}
+\setbeamercolor{block body}{fg=cslablack, bg=cslatintgray}
+\setbeamercolor{block title alerted}{fg=white, bg=cslaeaglegold}
+\setbeamercolor{block body alerted}{fg=cslablack, bg=cslatintgray}
+
+\setbeamercolor{footline}{fg=csladarkgray, bg=white}
+
+\setbeamercolor{page number in head/foot}{fg=csladarkgray}
+\setbeamercolor{section page}{fg=white, bg=cslablack}
+
+\mode<all>
