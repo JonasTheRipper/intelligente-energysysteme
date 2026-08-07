@@ -206,14 +206,15 @@
       \end{itemize}
     \end{column}
     \begin{column}{0.46\textwidth}
-      \begin{block}{Project facts}
+      \begin{block}{Why a \emph{synthesised} world?}
         \small
-        NATO Science for Peace and Security Multi-Year Project.\\[3pt]
-        Pillars: energy security, environmental hazards, advanced AI.\\[3pt]
-        Dual PI: \textbf{Veith} (OFFIS, DE) \& \textbf{Sultan}
-        (Cal State LA, US).\\[3pt]
-        Validation cases: SoCal wildfire cascades; Central European
-        severe-weather grid failures.
+        You cannot collect more Eaton Fires. The only way to enlarge the
+        tail of the distribution is to \gold{generate} it --- and the only
+        way that generation is defensible is if every mutation stays
+        physically admissible.\\[4pt]
+        Hence the two halves of GUARDIAN: a \textbf{mutation operator} that
+        proposes extreme worlds, and an \textbf{admissibility filter} that
+        throws away the ones physics forbids.
       \end{block}
       \vskip2pt
       {\scriptsize\color{csladarkgray}Motivating precedent: the Feb.\ 2022
@@ -465,30 +466,30 @@
   \begin{columns}[T,onlytextwidth]
     \begin{column}{0.55\textwidth}
       \begin{itemize}
-        \item Footprint \code{SOCAL\_BOUNDS} $=(-121.3,\,32.4,\,-113.7,\,37.7)$,
+        \item \code{SOCAL\_BOUNDS} $=(-121.3,\,32.4,\,-113.7,\,37.7)$,
               EPSG:4326. Row 0 is the \emph{north} edge.
         \item Three raster sources, in order of fidelity:
           \begin{itemize}
-            \item \code{from\_rasters()} --- real LANDFIRE FBFM40 fuel +
-                  3DEP elevation (needs \code{rasterio}).
-            \item \code{socal\_from\_srtm()} --- SRTM GL3 ($\approx$90\,m)
-                  via OpenTopography, 4$\times$3 tile mosaic, resampled to
-                  a $600\times760$ model grid.
-            \item \code{synthetic\_socal()} --- deterministic fallback used
-                  by CI.
+            \item \code{from\_rasters()} --- LANDFIRE FBFM40 fuel + 3DEP
+                  elevation (needs \code{rasterio}).
+            \item \code{socal\_from\_srtm()} --- SRTM GL3 ($\approx$90\,m),
+                  4$\times$3 tile mosaic $\rightarrow$ $600\times760$ grid.
+            \item \code{synthetic\_socal()} --- deterministic CI fallback.
           \end{itemize}
-        \item Degrades \emph{gracefully}: a missing DEM cache silently
-              falls back to synthetic terrain.
+        \item \gold{Real terrain is the default} --- every experiment YAML
+              but the smoke test sets \code{use\_real\_dem: true}. The 71\,MB
+              mosaic is git-ignored: fetch it once with
+              \code{fetch\_dem\_tiles.py}.
+        \item Without it a run \emph{silently} uses synthetic terrain.
       \end{itemize}
       \begin{alertblock}{Scale trap}
-        \small On the statewide grid one cell $\approx$\,947\,m. Retardant
-        drops are sub-cell there --- which is why fine grids
-        ($\approx$50\,m) are used for suppression studies.
+        \small One statewide cell $\approx$\,947\,m, so retardant drops are
+        sub-cell --- hence fine grids ($\approx$50\,m) for suppression work.
       \end{alertblock}
     \end{column}
     \begin{column}{0.43\textwidth}
       \centering
-      \includegraphics[width=\linewidth]{fire_growth.png}\\[2pt]
+      \includegraphics[width=0.92\linewidth]{fire_growth.png}\\[2pt]
       {\scriptsize\color{csladarkgray}Fire growth on the statewide raster
        (\texttt{analysis/fire\_growth.png})}
     \end{column}
@@ -860,9 +861,11 @@
         SAIDI numbers are \emph{not} metric-comparable to production, and
         two episodes cannot train a policy.
         \vskip3pt
-        Production long-runs are configured
-        (\code{episodes: 400}, \code{cql\_alpha: 1.0},
-        \code{use\_real\_dem: true}) but not yet reported.
+        Real-DEM long-runs \emph{are} committed --- the two
+        \code{\ldots\_drl\_long.yml} experiments
+        (\code{episodes: 400}, \code{use\_real\_dem: true}). They have
+        simply not been run yet.
+        \gold{An open task, not a missing feature.}
       \end{alertblock}
     \end{column}
   \end{columns}
