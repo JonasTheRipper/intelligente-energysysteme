@@ -17,11 +17,11 @@ Workflow (the coding session does NOT run these; the user does, after review):
   done
 
   python analysis/firefighter_report.py \
-    --run 0=sqlite:///_outputs/eaton_local_n0.db \
-    --run 1=sqlite:///_outputs/eaton_local_n1.db \
-    --run 3=sqlite:///_outputs/eaton_local_n3.db \
-    --run 5=sqlite:///_outputs/eaton_local_n5.db \
-    --run 7=sqlite:///_outputs/eaton_local_n7.db
+    --run 0=postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai \
+    --run 1=postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai \
+    --run 3=postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai \
+    --run 5=postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai \
+    --run 7=postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai
 
 The lowest ``n_planes`` supplied is the baseline; acres-saved for every other
 run is ``baseline_burned_acres - run_burned_acres``.
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     if not args.run:
-        ap.error("supply at least one --run N=URI (e.g. --run 0=sqlite:///base.db)")
+        ap.error("supply at least one --run N=URI (e.g. --run 0=postgresql://...)")
     runs = dict(_parse_run(a) for a in args.run)
     rows = build_report(runs, gis_uid=args.gis_uid, grid_uid=args.grid_uid,
                         env_step_min=args.env_step_min)

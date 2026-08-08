@@ -283,7 +283,7 @@ and surfaces new grid metrics per step (`vmin_pu`/`vmean_pu`, `intertie_mw`,
 
 ```bash
 # run the 3-phase experiment (heavy; ~5 GB peak, phases run sequentially)
-env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
+env PYTHONPATH=$PWD palaestrai -c runtime.conf.yaml start \
   palaestrai_socal/experiment_eaton_local_ab.yml
 
 # N-row comparison timelapse (one map row per phase + fading plane icons)
@@ -336,7 +336,7 @@ protection).
 
 ```bash
 # run the 4-phase experiment (heavy; ~5 GB peak, phases sequential)
-setsid bash _outputs/run_full_pg.sh runtime_pg_eaton.conf.yaml \
+setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
   palaestrai_socal/experiment_eaton_firefighting.yml v04_ff < /dev/null > /dev/null 2>&1 &
 
 # figures (the --phases grammar now accepts an optional descriptive label:

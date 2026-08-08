@@ -15,7 +15,7 @@ Final-state deltas (acres saved, SAIDI reduction, MW preserved) are annotated.
 
 Run:
   python analysis/grid_metrics_report.py \
-    --store sqlite:///_outputs/palaestrai_v03_ab.db \
+    --store postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai \
     --phase-a phase_0_no_ff --phase-b phase_1_with_ff \
     --out analysis/grid_metrics_ab.png
 """

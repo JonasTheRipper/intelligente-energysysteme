@@ -1,29 +1,42 @@
 # Core runtime dependencies for the SoCal wildfire / grid co-simulation.
 #
-# Pinned to the versions the experiments were verified against. palaestrAI
-# constrains numpy<2 and pandas==2.1.4; pandapower 3.4.0 power flow works fine
-# under that constraint. Do not bump numpy/pandas without re-validating.
+# Version selection rationale (Aug 2026):
+# - palaestrAI 3.5.11 pins numpy~=1.26.4 and pandas~=2.1.4.
+# - pandapower 3.2+ requires numpy>=2 and pandas>=2.2 (3.4.0 requires
+#   pandas~=2.3), which breaks the palaestrAI numpy/pandas pins. The newest
+#   pandapower that still permits pandas 2.1.4 and numpy 1.26.x is 3.1.2.
+# - simbench 1.6.2 requires pandapower>=3.4.0 (transitively pulls pandas 2.3),
+#   so it also breaks the stack. simbench 1.6.1 works.
+# - midas-powergrid 2.1.1 has no upper pin on numpy/pandas/pandapower, so it
+#   inherits whatever pip resolves from the pins below. No --no-deps hack
+#   is needed as long as this file is installed with pip's real resolver.
+#
+# Do not bump numpy, pandas, pandapower, or simbench without re-validating.
 numpy==1.26.4
 pandas==2.1.4
 scipy>=1.11,<2
-pandapower==3.4.0
+pandapower==3.1.2
 networkx>=3.0
 matplotlib>=3.7
 
 # palaestrAI / arsenAI stack (OFFIS ARL). palaestrai-mosaik + midas-palaestrai
 # pull in mosaik and the MIDAS modules used by the scenario.
-palaestrai==3.5.9
-palaestrai-mosaik==3.5.7
+#
+# To pick up palaestrAI's attach-ACK hotfix (arl2/palaestrai MR !497) before it
+# is released, replace the palaestrai line with:
+#     palaestrai @ git+https://gitlab.com/arl2/palaestrai.git@hotfix/attach-ack-timeout-for-fast-failures
+palaestrai==3.5.11
+palaestrai-mosaik==3.5.9
 midas-palaestrai==3.5.9
 
 # MIDAS power-grid simulator (needed by the firefighting experiment's socal_grid
-# environment). INSTALL GOTCHA: `pip install midas-powergrid` will try to pull
-# numpy>=2 / pandas>=2.3, which breaks palaestrAI (numpy<2, pandas==2.1.4). Install
-# it and its extra deps with --no-deps AFTER the pinned numpy/pandas above, e.g.:
-#   python -m pip install --no-deps midas-powergrid==2.1.0 simbench==1.6.2 natsort joblib
-# (simbench/natsort/joblib are midas-powergrid's runtime deps that are safe to add.)
-midas-powergrid==2.1.0
-simbench==1.6.2
+# environment).
+#
+# To pick up the get_outputs() perf change (midas-mosaik/midas-powergrid MR !16)
+# before it is released, replace the midas-powergrid line with:
+#     midas-powergrid @ git+https://gitlab.com/midas-mosaik/midas-powergrid.git@feature/perf-get-outputs-and-runpp-options
+midas-powergrid==2.1.1
+simbench==1.6.1
 natsort>=8.4
 joblib>=1.3
 

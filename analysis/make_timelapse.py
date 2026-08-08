@@ -2,7 +2,7 @@
 
 v0.2 is **store-only**: this no longer re-runs the environment. It reconstructs
 every frame from the ``world_states`` rows the two-environment run wrote to the
-palaestrAI sqlite store (see :mod:`analysis.store_readers`), so the animation
+palaestrAI store (see :mod:`analysis.store_readers`), so the animation
 reflects exactly what the agent-driven co-simulation produced:
 
 * the per-step hazard grid ``S`` (UNBURNED / BURNING / BURNED_OUT) from the
@@ -21,7 +21,7 @@ using the **unchanged v0.1 ``render()``**:
 
 Run:
   python analysis/make_timelapse.py \
-    --store sqlite:///_outputs/palaestrai_v02.db --stride 2
+    --store postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai --stride 2
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ IGNITION_LON, IGNITION_LAT = -118.13, 34.19
 
 
 def capture_from_store(
-    store_uri: str = "sqlite:///_outputs/palaestrai_v02.db",
+    store_uri: str = "postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai",
     gis_uid: str = "gis_world",
     grid_uid: str = "socal_grid",
     env_step_min: float = 60.0,
@@ -293,8 +293,8 @@ def render(snaps, meta, outdir=None, stride=1, fps=12, title=None):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--store", default="sqlite:///_outputs/palaestrai_v02.db",
-                    help="palaestrAI store URI or sqlite path to read frames from")
+    ap.add_argument("--store", default="postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai",
+                    help="palaestrAI store URI (TimescaleDB or sqlite:// path)")
     ap.add_argument("--gis-uid", default="gis_world")
     ap.add_argument("--grid-uid", default="socal_grid")
     ap.add_argument("--stride", type=int, default=1,

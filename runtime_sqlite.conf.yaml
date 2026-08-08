@@ -1,0 +1,12 @@
+# palaestrAI runtime config — SQLite fallback (no Docker needed).
+#
+# This config writes results to a local SQLite file. Use it when you don't
+# have the TimescaleDB container running (e.g. quick tests, CI, debugging).
+# The default runtime.conf.yaml points at TimescaleDB for production runs.
+#
+# Note: SQLite does not get hypertables, so large experiments will be slower.
+store_uri: "sqlite:///_outputs/palaestrai_v02.db"
+executor_bus_port: 4242
+logger_port: 0
+public_bind: False
+store_buffer_size: 1

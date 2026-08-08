@@ -1,4 +1,4 @@
-store_uri: "sqlite:///_outputs/palaestrai_v02_full120.db"
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai"
 executor_bus_port: 4242
 logger_port: 0
 public_bind: False

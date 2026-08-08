@@ -1,7 +1,7 @@
 # palaestrAI runtime config for the SHORT verification run (v0.2).
-# Identical to runtime.conf.yaml but points at a FRESH sqlite store so the
-# short run never clobbers _outputs/palaestrai_v02.db.
-store_uri: "sqlite:///_outputs/palaestrai_v02_short.db"
+# Uses the TimescaleDB store (docker compose up -d timescale).
+# Run `palaestrai -c runtime_short.conf.yaml database-create` after first start.
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai"
 executor_bus_port: 4242
 logger_port: 0
 public_bind: False

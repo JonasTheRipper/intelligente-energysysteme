@@ -1,12 +1,19 @@
 # =============================================================================
-# PostGIS server for staging the SoCal wildfire CMA GIS layers.
+# Docker services for the SoCal wildfire / grid co-simulation.
 #
-#   docker compose up -d postgis        # start the database
+#   docker compose up -d postgis        # PostGIS for GIS raster staging (port 5432)
+#   docker compose up -d timescale      # TimescaleDB for palaestrAI store (port 5433)
 #   docker compose run --rm gis-loader  # build raster + load grid into PostGIS
 #
-# The wildfire_cma.postgis module connects with the matching defaults
-# (host=localhost port=5432 db=wildfire user=wildfire password=wildfire), which
-# you can override via the PG* / WILDFIRE_PG_DSN environment variables.
+# PostGIS (port 5432) stores the CMA GIS layers; wildfire_cma.postgis connects
+# with the matching defaults (host=localhost port=5432 db=wildfire user=wildfire
+# password=wildfire), overridable via PG* / WILDFIRE_PG_DSN env vars.
+#
+# TimescaleDB (port 5433) stores palaestrAI experiment results (world_states,
+# muscle_actions hypertables). The runtime YAMLs point at
+# postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai. Run
+# `palaestrai -c runtime.conf.yaml database-create` after first start to
+# create the schema + hypertables.
 # =============================================================================
 services:
   postgis:
@@ -23,6 +30,27 @@ services:
       - ./data/postgis_init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U wildfire -d wildfire"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # palaestrAI experiment result store. TimescaleDB hypertables
+  # (world_states, muscle_actions) are created automatically by
+  # `palaestrai -c <conf> database-create`.
+  timescale:
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: socal_wildfire_timescale
+    environment:
+      POSTGRES_DB: palaestrai
+      POSTGRES_USER: palaestrai
+      POSTGRES_PASSWORD: socal_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - tsdata:/var/lib/postgresql/data
+      - ./data/timescale_init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U palaestrai -d palaestrai"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -49,3 +77,4 @@ services:
 
 volumes:
   pgdata:
+  tsdata:

@@ -27,17 +27,16 @@ summary see [`v0.4_RELEASE.md`](v0.4_RELEASE.md).
 ```bash
 cd socal-wildfires && export PYTHONPATH=$PWD
 
-# 1. point this at YOUR PostgreSQL store; create a fresh DB + schema
-cp runtime_pg_eaton.conf.yaml runtime_pg_myrun.conf.yaml
-$EDITOR runtime_pg_myrun.conf.yaml         # set store_uri to a NEW, empty database
-palaestrai -c runtime_pg_myrun.conf.yaml database-create
+# 1. start the TimescaleDB store (first time only)
+docker compose up -d timescale
+palaestrai -c runtime.conf.yaml database-create   # creates schema + hypertables
 
 # 2. run the 4-phase experiment (writes to the store; ~30–45 min, ~5 GB RAM peak)
-_outputs/run_full_pg.sh runtime_pg_myrun.conf.yaml \
+_outputs/run_full_pg.sh runtime.conf.yaml \
     palaestrai_socal/experiment_eaton_firefighting.yml v04_ff
 
 # 3. render the timelapse + grid-metrics figures
-STORE="postgresql://USER:PW@HOST:PORT/DBNAME"   # same as store_uri
+STORE="postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai"
 python analysis/make_comparison_timelapse.py --store "$STORE" --stride 1 --fps 10 \
   --phases "phase_0_no_ff:0:No firefighting,phase_1_air:3:Air only (3 tankers),phase_2_air_ground:3:Air+ground,phase_3_full_triage:3:Full triage+protect"
 python analysis/grid_metrics_report.py --store "$STORE" --out analysis/grid_metrics_v04.png \
@@ -52,10 +51,10 @@ python analysis/grid_metrics_report.py --store "$STORE" --out analysis/grid_metr
 |---|---|
 | Python | 3.12 |
 | numpy / pandas | **1.26.4 / 2.1.4** (hard-pinned; the CA relies on numpy semantics) |
-| palaestrai | 3.5.9 |
+| palaestrai | 3.5.11 |
 | mosaik | 3.5.0 |
-| pandapower | 3.4.0 (needed for the grid env + point protection; degrades gracefully if absent) |
-| store | PostgreSQL 14+ (TimescaleDB recommended; `database-create` adds the extension + hypertables) |
+| pandapower | 3.1.2 (needed for the grid env + point protection; degrades gracefully if absent) |
+| store | TimescaleDB 2.x on PostgreSQL 16 (`docker compose up -d timescale`; `database-create` adds the extension + hypertables) |
 
 A standalone (no-broker) driver also exists for the wildfire CA alone — see the main
 [`README.md`](../README.md) §A. The firefighting comparison, however, needs the full
@@ -66,31 +65,37 @@ palaestrAI run because it depends on the multi-phase store.
 ## 2. The runtime config (store connection)
 
 The experiment file says *what* to simulate; the **runtime config** says *where to
-store it* and which broker port to use. Runtime configs are **git-ignored**
-(`runtime_pg*.conf.yaml`) because they contain a local DB password.
-
-Copy an existing one and edit the `store_uri`:
+store it* and which broker port to use. The shipped configs
+(`runtime.conf.yaml`, `runtime_short.conf.yaml`, `runtime_full16.conf.yaml`,
+`runtime_full120.conf.yaml`) all point at the TimescaleDB container:
 
 ```yaml
-# runtime_pg_myrun.conf.yaml
-store_uri: "postgresql://palaestrai:YOUR_PW@127.0.0.1:5433/palaestrai_myrun"
+# runtime.conf.yaml
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai"
 executor_bus_port: 4242
 logger_port: 0
 ```
 
-**One store = one experiment run.** Phase uids must be unique within a store, so use
-a **fresh, empty database** per run (or drop and recreate). Create the DB and schema:
+Start the store and create the schema (first time only):
 
 ```bash
-# create the empty database (psql), then the palaestrAI schema
-psql -h 127.0.0.1 -p 5433 -U palaestrai -d postgres \
-     -c "CREATE DATABASE palaestrai_myrun;"
-palaestrai -c runtime_pg_myrun.conf.yaml database-create
+docker compose up -d timescale                       # start TimescaleDB on :5433
+palaestrai -c runtime.conf.yaml database-create      # creates tables + hypertables
 ```
 
-`database-create` is idempotent for the schema but expects the database itself to
-exist. It installs the TimescaleDB extension and converts `world_states` /
-`muscle_actions` to hypertables.
+`database-create` is idempotent for the schema. It installs the TimescaleDB
+extension (already present via the container's init script) and converts
+`world_states` / `muscle_actions` to hypertables.
+
+All experiments share a single `palaestrai` database; phase uids in the
+experiment YAMLs keep runs distinct. For a fully isolated run, create a
+separate database and a custom runtime config pointing at it.
+
+### SQLite fallback
+
+If you don't have Docker available, use `runtime_sqlite.conf.yaml` — it writes
+to a local file under `_outputs/`. The analysis scripts accept any store URI
+(`sqlite:///...` or `postgresql://...`), so you can mix and match.
 
 ---
 
@@ -104,11 +109,11 @@ trailing `<tag>_EXIT_RC=<n>` line) and `_outputs/<tag>_sampler.log`.
 
 ```bash
 # foreground (blocks the shell)
-_outputs/run_full_pg.sh runtime_pg_myrun.conf.yaml \
+_outputs/run_full_pg.sh runtime.conf.yaml \
     palaestrai_socal/experiment_eaton_firefighting.yml v04_ff
 
 # detached (survives shell exit) — recommended for the ~30–45 min run
-setsid bash _outputs/run_full_pg.sh runtime_pg_myrun.conf.yaml \
+setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
     palaestrai_socal/experiment_eaton_firefighting.yml v04_ff \
     < /dev/null > /dev/null 2>&1 &
 ```
@@ -116,7 +121,7 @@ setsid bash _outputs/run_full_pg.sh runtime_pg_myrun.conf.yaml \
 ### 3.2 Plain palaestrAI
 
 ```bash
-palaestrai -c runtime_pg_myrun.conf.yaml start \
+palaestrai -c runtime.conf.yaml start \
     palaestrai_socal/experiment_eaton_firefighting.yml
 ```
 
@@ -301,7 +306,7 @@ rm -f analysis/_frame*.png
 
 ```bash
 # run
-setsid bash _outputs/run_full_pg.sh runtime_pg_myrun.conf.yaml \
+setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
   palaestrai_socal/experiment_eaton_firefighting.yml v04_ff < /dev/null > /dev/null 2>&1 &
 grep EXIT_RC _outputs/v04_ff_run.log
 
@@ -354,37 +359,28 @@ python analysis/make_sim_vs_real.py --fire palisades \
 
 ### 8.3 Run the firefighting counterfactuals for both fires
 
-Each fire has its own experiment YAML and its own store (phase uids must be unique per
-store). Set up TimescaleDB, create the schema, then run:
+Each fire has its own experiment YAML. All experiments share the TimescaleDB
+store (phase uids in the YAMLs keep runs distinct). Start the store and run:
 
 ```bash
 # --- Eaton ---
-cp runtime_pg_eaton.conf.yaml runtime_pg_myeaton.conf.yaml   # set store_uri -> fresh DB
-palaestrai -c runtime_pg_myeaton.conf.yaml database-create
-setsid bash _outputs/run_full_pg.sh runtime_pg_myeaton.conf.yaml \
+docker compose up -d timescale
+palaestrai -c runtime.conf.yaml database-create   # first time only
+setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
     palaestrai_socal/experiment_eaton_firefighting.yml eaton_v05 < /dev/null >/dev/null 2>&1 &
 
-# --- Palisades (use a DIFFERENT DB and a different executor_bus_port) ---
-cp runtime_pg_palisades.conf.yaml runtime_pg_mypal.conf.yaml  # set store_uri -> fresh DB
-palaestrai -c runtime_pg_mypal.conf.yaml database-create
-setsid bash _outputs/run_full_pg.sh runtime_pg_mypal.conf.yaml \
+# --- Palisades (use a different executor_bus_port to avoid collision) ---
+# Create runtime_palisades.conf.yaml with executor_bus_port: 4243
+setsid bash _outputs/run_full_pg.sh runtime_palisades.conf.yaml \
     palaestrai_socal/experiment_palisades_firefighting.yml palisades_v05 < /dev/null >/dev/null 2>&1 &
 
 grep EXIT_RC _outputs/eaton_v05_run.log _outputs/palisades_v05_run.log   # want =0
 ```
 
-> **Store-schema gotcha.** `database-create` needs the database to exist **and** the
-> TimescaleDB (and PostGIS) extensions installed first, otherwise the store receiver
-> fails with `relation "experiments" does not exist`. On a fresh DB:
-> ```sql
-> CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
-> CREATE EXTENSION IF NOT EXISTS postgis CASCADE;
-> ```
-> then run `palaestrai -c <conf> database-create`.
-
-> **Two experiments at once.** Give each fire a **separate database** and a **distinct
-> `executor_bus_port`** in its runtime conf (e.g. 4242 for Eaton, 4243 for Palisades)
-> so the two runs don't collide on the broker port.
+> **Two experiments at once.** If running Eaton and Palisades concurrently, give
+> each fire a **distinct `executor_bus_port`** in its runtime conf (e.g. 4242 for
+> Eaton, 4243 for Palisades) so the two runs don't collide on the broker port.
+> The TimescaleDB store is shared; phase uids keep the runs distinct.
 
 ### 8.4 Render the per-fire figures (timelapse + grid metrics)
 
@@ -466,12 +462,12 @@ grid, `max_steps: 60`) and the same production hyperparameters: `episodes: 400`,
 `evaluate_every: 20`, `cql_alpha: 1.0`, `update_after: 1000`, `start_steps: 1000`.
 
 ```bash
-env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
+env PYTHONPATH=$PWD palaestrai -c runtime.conf.yaml start \
   palaestrai_socal/experiment_eaton_firefighting_drl_long.yml
 ```
 
-Give each fire its **own** database and its own `executor_bus_port`, exactly as in
-§8.3.
+Give each fire its own `executor_bus_port` (see §8.3); the TimescaleDB store
+is shared.
 
 ### 9.3 Early stopping — `AgentObjectiveTerminationCondition`
 
