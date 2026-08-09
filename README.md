@@ -58,7 +58,8 @@ docker-compose.yml   PostGIS 16 + GIS loader
 
 ```bash
 # 1) install (core runtime)
-pip install -r requirements.txt          # numpy/pandas/pandapower/palaestrai/...
+pip install -r requirements.txt          # numpy/pandas/palaestrai/...
+pip install --no-deps -r requirements-nodeps.txt   # pandapower; see that file
 # or for development + CI:
 pip install -r requirements-dev.txt
 
@@ -121,6 +122,7 @@ deterministic Santa-Ana Θ schedule, then writes the report + figures:
 
 ```bash
 pip install -r requirements.txt
+pip install --no-deps -r requirements-nodeps.txt   # pandapower; see that file
 python analysis/run_5day.py --max-steps 120 --outdir analysis
 ```
 
@@ -144,6 +146,7 @@ experiment run file `palaestrai_socal/experiment.yml`.
 ```bash
 # 1) install the palaestrAI / MIDAS stack
 pip install -r requirements.txt        # includes palaestrai, palaestrai-mosaik, midas-palaestrai
+pip install --no-deps -r requirements-nodeps.txt   # pandapower; see that file
 
 # 2) generate the NOAA weather CSV the scenario reads (one-off)
 python midas_socal/prepare_midas.py

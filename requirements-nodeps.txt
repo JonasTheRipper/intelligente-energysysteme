@@ -1,0 +1,30 @@
+# Dependencies that MUST bypass pip's resolver.
+#
+# Install with:
+#     pip install --no-deps -r requirements-nodeps.txt
+# always AFTER `pip install -r requirements.txt`.
+#
+# Why this file exists
+# --------------------
+# palaestrAI hard-pins numpy~=1.26.4 and pandas~=2.1.4.
+#
+# Our stored grid JSONs (socal_grid/socal_grid.json, midas_socal/*.json) use
+# the split ZIP-load columns const_z_p_percent / const_i_p_percent, which
+# pandapower introduced in 3.2. On pandapower 3.1.x, runpp() looks for the old
+# combined const_z_percent and raises KeyError. socal_grid.dispatch_and_run
+# catches every exception from runpp and reports the step as non-convergent,
+# so an too-old pandapower does NOT crash the run: it completes, exits 0, and
+# silently produces an experiment in which the power flow never solved, no
+# load was ever shed, and every grid KPI is exactly zero.
+#
+# So pandapower must be >= 3.2. But pandapower >= 3.2 *declares* numpy>=2 and
+# pandas>=2.2 (3.4.0 declares pandas~=2.3), so pip reports ResolutionImpossible
+# against the palaestrAI pins. Those declared bounds are stricter than what
+# pandapower actually needs at runtime: 3.4.0 works correctly on numpy 1.26.4
+# and pandas 2.1.4 (full suite green, plus an end-to-end MIDAS run).
+#
+# Hence --no-deps. Keep this file to packages where that is a deliberate,
+# verified decision -- not as a general dumping ground for version conflicts.
+#
+# tests/test_pandapower_compat.py enforces the >= 3.2 half of this contract.
+pandapower==3.4.0

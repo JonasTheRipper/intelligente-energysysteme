@@ -1,35 +1,25 @@
 # Core runtime dependencies for the SoCal wildfire / grid co-simulation.
 #
+# !! This file is only HALF the install. Always follow it with:
+#        pip install --no-deps -r requirements-nodeps.txt
+#    which brings in pandapower. See requirements-nodeps.txt for why it
+#    cannot go through pip's resolver.
+#
 # Version selection rationale (Aug 2026):
-# - palaestrAI 3.5.11 hard-pins numpy~=1.26.4 and pandas~=2.1.4.
-# - Our stored grid JSONs (socal_grid/socal_grid.json, midas_socal/*.json) use
-#   the split ZIP-load columns const_z_p_percent / const_i_p_percent, which
-#   pandapower introduced in 3.2. On pandapower 3.1.x runpp() looks for the
-#   old combined const_z_percent and dies with KeyError. dispatch_and_run's
-#   continuation loop catches every exception, so this does NOT surface as an
-#   error -- the power flow just silently never converges, no load is shed and
-#   every KPI reads zero. pandapower must therefore be >= 3.2.
-# - But pandapower >= 3.2 *declares* numpy>=2 / pandas>=2.2 (3.4.0 declares
-#   pandas~=2.3), which pip cannot reconcile with the palaestrAI pins above.
-#   Those declared bounds are stricter than what pandapower actually needs:
-#   3.4.0 runs correctly on numpy 1.26.4 / pandas 2.1.4. Verified on the full
-#   test suite (219 passed) and an end-to-end MIDAS + TimescaleDB experiment.
-# - So pandapower is installed WITHOUT dependency resolution. Install with:
-#       pip install -r requirements.txt
-#       pip install --no-deps --force-reinstall pandapower==3.4.0
-#   (or keep pandapower out of the resolver in your own tooling). The pin is
-#   left here as documentation of the required version.
+# - palaestrAI 3.5.11 hard-pins numpy~=1.26.4 and pandas~=2.1.4, so numpy and
+#   pandas are frozen here to match.
+# - pandapower must be >= 3.2 for the stored grid JSONs, but its own declared
+#   pins conflict with the two above, so it lives in requirements-nodeps.txt.
 # - simbench 1.6.2 requires pandapower>=3.4.0 and would drag pandas 2.3 back
 #   in through the resolver; 1.6.1 works and is what we test against.
 #
 # Do not bump numpy, pandas, pandapower, or simbench without re-validating
-# BOTH the test suite and a real MIDAS run -- the 3.1.2 failure mode above is
-# completely silent and produces plausible-looking all-zero results.
+# BOTH the test suite and a real MIDAS run -- an incompatible pandapower fails
+# completely silently and produces plausible-looking all-zero results.
 numpy==1.26.4
 pandas==2.1.4
 scipy>=1.11,<2
-# See the --no-deps note above: do not let pip resolve pandapower's own pins.
-pandapower==3.4.0
+# pandapower is intentionally NOT listed here -- see requirements-nodeps.txt.
 networkx>=3.0
 matplotlib>=3.7
 

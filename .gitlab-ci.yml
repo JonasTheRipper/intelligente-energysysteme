@@ -88,6 +88,8 @@ system:
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
+    # pandapower must bypass the resolver -- see requirements-nodeps.txt
+    - pip install -q --no-deps -r requirements-nodeps.txt
     - python -m pytest -m slow -v --junitxml=report-system.xml
   artifacts:
     when: always
@@ -111,6 +113,8 @@ midas_smoke:
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
+    # pandapower must bypass the resolver -- see requirements-nodeps.txt
+    - pip install -q --no-deps -r requirements-nodeps.txt
     # Prepare the MIDAS artefacts + NOAA weather CSV, then run a short scenario.
     - python midas_socal/prepare_midas.py || echo "prepare step produced artefacts"
     - bash midas_socal/run_sim.sh --smoke || true
@@ -135,6 +139,8 @@ five_day_simulation:
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
+    # pandapower must bypass the resolver -- see requirements-nodeps.txt
+    - pip install -q --no-deps -r requirements-nodeps.txt
     - python analysis/run_5day.py --max-steps 120 --outdir analysis
     # sanity-check the run produced the expected artifacts
     - test -f analysis/five_day_kpis.csv

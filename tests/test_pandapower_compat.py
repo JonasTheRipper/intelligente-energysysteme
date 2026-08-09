@@ -24,8 +24,15 @@ from __future__ import annotations
 import json
 import os
 
-import pandapower as pp
 import pytest
+
+# The lightweight `unit` CI stage installs numpy/pandas/scipy only, so this
+# module must stay collectable without pandapower. Everything that needs it is
+# marked `slow` and runs in the `system` stage, which installs the real
+# requirements.
+pp = pytest.importorskip("pandapower", reason="pandapower not installed")
+
+pytestmark = pytest.mark.slow
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
