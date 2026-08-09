@@ -54,6 +54,21 @@ midas-palaestrai==3.5.9
 # before it is released, replace the midas-powergrid line with:
 #     midas-powergrid @ git+https://gitlab.com/midas-mosaik/midas-powergrid.git@feature/perf-get-outputs-and-runpp-options
 midas-powergrid==2.1.1
+
+# The remaining MIDAS simulator modules named in midas_socal/socal_midas.yml
+# (`modules: [store, timesim, powergrid, weather, powerseries]`). MIDAS resolves
+# each entry to a `midas_<name>` import at scenario-configure time, so a missing
+# one is not caught until the run starts:
+#     ModuleNotFoundError: No module named 'midas_store'
+# which is exactly how the midas_smoke CI job failed. Only midas-powergrid was
+# listed before, because the test suite imports it directly while the other four
+# are reached solely through the YAML scenario.
+# midas-mosaik[arl] covers store/timesim/weather but NOT powerseries, so these
+# are pinned individually to match the versions the scenario is developed on.
+midas-store==2.1.0
+midas-timesim==2.1.1
+midas-weather==2.1.0
+midas-powerseries==2.1.0
 simbench==1.6.1
 natsort>=8.4
 joblib>=1.3
