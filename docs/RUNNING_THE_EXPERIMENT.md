@@ -24,6 +24,25 @@ summary see [`v0.4_RELEASE.md`](v0.4_RELEASE.md).
 
 ## 0. TL;DR — reproduce the v0.4 result end-to-end
 
+**The short version is one command.** `run_experiment.sh` at the repository root
+drives the whole pipeline — containers, GIS load, schema, simulation, figures —
+and explains each stage as it runs:
+
+```bash
+cd socal-wildfires && export PYTHONPATH=$PWD
+
+./run_experiment.sh --dry-run     # print the full plan without doing anything
+./run_experiment.sh               # the real thing (~30–45 min, ~5 GB RAM peak)
+```
+
+It deliberately does **not** install anything, so it works against editable
+installs from MR branches (`pip install -e ...`); its preflight prints the file
+each import resolves to so you can confirm which checkout is under test.
+Individual stages are selectable — `--only analysis` re-renders the figures from
+data that is already in the store. See `./run_experiment.sh --help`.
+
+The rest of this section, and §§1–8, spell the same workflow out by hand.
+
 ```bash
 cd socal-wildfires && export PYTHONPATH=$PWD
 
@@ -32,8 +51,8 @@ docker compose up -d timescale
 palaestrai -c runtime.conf.yaml database-create   # creates schema + hypertables
 
 # 2. run the 4-phase experiment (writes to the store; ~30–45 min, ~5 GB RAM peak)
-_outputs/run_full_pg.sh runtime.conf.yaml \
-    palaestrai_socal/experiment_eaton_firefighting.yml v04_ff
+palaestrai -c runtime.conf.yaml start \
+    palaestrai_socal/experiment_eaton_firefighting.yml
 
 # 3. render the timelapse + grid-metrics figures
 STORE="postgresql://palaestrai:socal_local@127.0.0.1:5433/palaestrai"
@@ -101,22 +120,28 @@ to a local file under `_outputs/`. The analysis scripts accept any store URI
 
 ## 3. Running the experiment
 
-### 3.1 Recommended: the background run script
+### 3.1 Recommended: `run_experiment.sh`
 
-`_outputs/run_full_pg.sh <runtime_conf> <experiment_yml> <tag>` starts a memory
-sampler and launches palaestrAI, writing logs to `_outputs/<tag>_run.log` (with a
-trailing `<tag>_EXIT_RC=<n>` line) and `_outputs/<tag>_sampler.log`.
+`./run_experiment.sh` starts a memory sampler and launches palaestrAI, writing
+logs to `_outputs/<tag>_run.log` (with a trailing `<tag>_EXIT_RC=<n>` line) and
+`_outputs/<tag>_sampler.log`. `--tag` defaults to the experiment filename.
 
 ```bash
-# foreground (blocks the shell)
-_outputs/run_full_pg.sh runtime.conf.yaml \
-    palaestrai_socal/experiment_eaton_firefighting.yml v04_ff
+# foreground (blocks the shell, streams the log)
+./run_experiment.sh --only simulate \
+    -e palaestrai_socal/experiment_eaton_firefighting.yml --tag v04_ff
 
 # detached (survives shell exit) — recommended for the ~30–45 min run
-setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
-    palaestrai_socal/experiment_eaton_firefighting.yml v04_ff \
-    < /dev/null > /dev/null 2>&1 &
+./run_experiment.sh --only simulate --detach \
+    -e palaestrai_socal/experiment_eaton_firefighting.yml --tag v04_ff
 ```
+
+Drop `--only simulate` to run the containers, GIS load, schema and analysis
+stages around it as well.
+
+> **Note.** Earlier revisions of this document referred to a
+> `_outputs/run_full_pg.sh` helper. That script is not part of the repository;
+> `run_experiment.sh` replaces it and keeps the same log-file conventions.
 
 ### 3.2 Plain palaestrAI
 
@@ -306,8 +331,8 @@ rm -f analysis/_frame*.png
 
 ```bash
 # run
-setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
-  palaestrai_socal/experiment_eaton_firefighting.yml v04_ff < /dev/null > /dev/null 2>&1 &
+./run_experiment.sh --detach -y \
+  -e palaestrai_socal/experiment_eaton_firefighting.yml --tag v04_ff
 grep EXIT_RC _outputs/v04_ff_run.log
 
 # tests
@@ -363,16 +388,15 @@ Each fire has its own experiment YAML. All experiments share the TimescaleDB
 store (phase uids in the YAMLs keep runs distinct). Start the store and run:
 
 ```bash
-# --- Eaton ---
-docker compose up -d timescale
-palaestrai -c runtime.conf.yaml database-create   # first time only
-setsid bash _outputs/run_full_pg.sh runtime.conf.yaml \
-    palaestrai_socal/experiment_eaton_firefighting.yml eaton_v05 < /dev/null >/dev/null 2>&1 &
+# --- Eaton --- (containers + schema are set up by the earlier stages)
+./run_experiment.sh --detach -y --skip analysis \
+    -e palaestrai_socal/experiment_eaton_firefighting.yml --tag eaton_v05
 
 # --- Palisades (use a different executor_bus_port to avoid collision) ---
 # Create runtime_palisades.conf.yaml with executor_bus_port: 4243
-setsid bash _outputs/run_full_pg.sh runtime_palisades.conf.yaml \
-    palaestrai_socal/experiment_palisades_firefighting.yml palisades_v05 < /dev/null >/dev/null 2>&1 &
+./run_experiment.sh --detach -y --only simulate \
+    -r runtime_palisades.conf.yaml \
+    -e palaestrai_socal/experiment_palisades_firefighting.yml --tag palisades_v05
 
 grep EXIT_RC _outputs/eaton_v05_run.log _outputs/palisades_v05_run.log   # want =0
 ```

@@ -79,11 +79,19 @@ def _raise_always(exc):
 # 1. Non-convergence: behaviour must be unchanged.
 # --------------------------------------------------------------------------
 
-def test_persistent_divergence_returns_false(net, monkeypatch, capsys):
-    """All three algorithms diverge -> report the step and return False."""
+@pytest.mark.parametrize(
+    "exc_cls",
+    [pp.LoadflowNotConverged, pp.NetCalculationNotConverged],
+    ids=["loadflow", "netcalculation"],
+)
+def test_persistent_divergence_returns_false(net, monkeypatch, capsys, exc_cls):
+    """All three algorithms diverge -> report the step and return False.
+
+    Both power-flow convergence errors must drive this path.
+    """
     monkeypatch.setattr(
         dar.pp, "runpp",
-        _raise_always(pp.LoadflowNotConverged("Power Flow did not converge")),
+        _raise_always(exc_cls("Power Flow did not converge")),
     )
 
     assert dar.run(net, verbose=False) is False
@@ -128,8 +136,17 @@ def test_fallback_recovers_after_divergence(net, monkeypatch):
         TypeError("runpp() got an unexpected keyword argument 'algorithm'"),
         # A malformed net.
         ValueError("bus 42 is not in the net"),
+        # pandapower's own errors that are NOT power-flow convergence failures.
+        # AlgorithmUnknown means we passed a bad `algorithm=`; retrying with a
+        # different algorithm would hide our own bug.
+        pp.AlgorithmUnknown("Algorithm 'iwamoto_nr' is unknown"),
+        # We never run an OPF, so this would mean the call was wired up wrong.
+        pp.OPFNotConverged("Optimal Power Flow did not converge"),
+        # The controller loop is a different loop from the power flow.
+        pp.ControllerNotConverged("Controller did not converge"),
     ],
-    ids=["keyerror", "attributeerror", "modulenotfound", "typeerror", "valueerror"],
+    ids=["keyerror", "attributeerror", "modulenotfound", "typeerror", "valueerror",
+         "algorithm_unknown", "opf_not_converged", "controller_not_converged"],
 )
 def test_non_convergence_errors_propagate(net, monkeypatch, exc):
     """A broken dependency must fail loudly, not masquerade as divergence."""
@@ -165,7 +182,7 @@ def test_error_in_fallback_also_propagates(net, monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_convergence_errors_stays_narrow():
-    """Fail if someone widens CONVERGENCE_ERRORS back towards Exception.
+    """Fail if someone widens POWER_FLOW_ERRORS back towards Exception.
 
     ``ppException`` is pandapower's base class for *all* its errors, including
     configuration and validation ones, so catching it would reintroduce the
@@ -173,9 +190,13 @@ def test_convergence_errors_stays_narrow():
     """
     from pandapower.auxiliary import ppException
 
-    assert pp.LoadflowNotConverged in dar.CONVERGENCE_ERRORS
+    # The two power-flow convergence errors, and only those.
+    assert set(dar.POWER_FLOW_ERRORS) == {
+        pp.LoadflowNotConverged,
+        pp.NetCalculationNotConverged,
+    }
 
-    for caught in dar.CONVERGENCE_ERRORS:
+    for caught in dar.POWER_FLOW_ERRORS:
         # Every entry must be a strict subclass of pandapower's error base --
         # never ppException itself, and never a builtin.
         assert issubclass(caught, ppException), caught
@@ -184,4 +205,4 @@ def test_convergence_errors_stays_narrow():
     # The failure modes that must never be swallowed.
     for builtin in (KeyError, AttributeError, ModuleNotFoundError,
                     TypeError, ValueError):
-        assert not issubclass(builtin, dar.CONVERGENCE_ERRORS), builtin
+        assert not issubclass(builtin, dar.POWER_FLOW_ERRORS), builtin

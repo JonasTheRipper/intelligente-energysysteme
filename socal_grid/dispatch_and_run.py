@@ -47,26 +47,48 @@ FRAC_LOCAL   = 0.90    # fraction of each bus load met by co-located generation
 LOSS_MARGIN  = 1.03    # assume ~3% losses for reporting/headroom
 CONT_STEPS   = [0.30, 0.60, 1.00]   # load-continuation schedule
 
-# Exceptions that mean "this power flow did not converge" and nothing else.
+# Errors that mean "the power flow itself failed to converge" -- nothing else.
 #
 # run() reacts to a failed pp.runpp by retrying with a different algorithm and,
 # if that also fails, reporting the step as unsolved and returning False. That
-# is the correct response to genuine divergence. It is the wrong response to a
-# broken dependency: a KeyError, AttributeError, ImportError or TypeError out of
-# runpp means the model or the installed pandapower is wrong, and silently
-# downgrading it to "did not converge" produces a full set of zeroed KPIs that
-# looks like a legitimate blackout result. That is exactly how the split
-# ZIP-load column change (const_z_percent -> const_z_p_percent) slipped through
-# as plausible-looking output instead of an error.
+# is the correct response to a power flow that genuinely did not converge. It is
+# the wrong response to anything else: a KeyError, AttributeError or
+# ModuleNotFoundError out of runpp means the model or the installed pandapower
+# is broken, and downgrading that to "did not converge" produces a full set of
+# zeroed KPIs indistinguishable from a real blackout. That is exactly how the
+# split ZIP-load column change (const_z_percent -> const_z_p_percent) shipped as
+# plausible-looking output instead of an error.
 #
-# Verified against pandapower 3.4.0: a divergent net raises
-# pandapower.auxiliary.LoadflowNotConverged, which derives from ppException,
-# NOT from NetCalculationNotConverged. Keep this tuple minimal -- widening it to
-# ppException would pull configuration and validation errors back under the
-# fallback and reintroduce the silent-zero failure mode. numpy.linalg.LinAlgError
-# is deliberately excluded: a singular Jacobian has not been observed on this
-# model, and if it ever is, it should surface loudly and be added on purpose.
-CONVERGENCE_ERRORS = (pp.LoadflowNotConverged,)
+# pandapower 3.4.0 derives five exceptions from ppException. Only two of them
+# describe a non-converged power flow:
+#
+#   LoadflowNotConverged        the AC/DC power flow diverged. This is what a
+#                               genuinely divergent net raises (verified).
+#   NetCalculationNotConverged  same category, raised by the newer generic
+#                               calculation paths.
+#
+# The other three are deliberately NOT caught, because none of them means the
+# power flow failed to converge:
+#
+#   AlgorithmUnknown            we passed a bad `algorithm=` -- a programming
+#                               error. Retrying with another algorithm would
+#                               paper over our own bug.
+#   OPFNotConverged             we never run an OPF; seeing it would mean the
+#                               call was wired up wrong.
+#   ControllerNotConverged      the controller loop, not the power flow. This
+#                               model has no controllers, and if one is ever
+#                               added its non-convergence deserves handling of
+#                               its own rather than a silent algorithm swap.
+#
+# Do not widen this to ppException: that is the base class of all five and would
+# pull the configuration errors back in, reinstating the silent-zero failure
+# mode. numpy.linalg.LinAlgError is also excluded -- a singular Jacobian surfaces
+# as MatrixRankWarning followed by LoadflowNotConverged, so it is already
+# covered, and a raw LinAlgError escaping runpp would mean something else broke.
+POWER_FLOW_ERRORS = (
+    pp.LoadflowNotConverged,
+    pp.NetCalculationNotConverged,
+)
 
 
 def strengthen(net):
@@ -186,9 +208,9 @@ def run(net, verbose=True):
                 vm = net.res_bus.vm_pu.dropna()
                 print(f"  continuation step {k+1}/{len(CONT_STEPS)} "
                       f"(load x{s:.2f}) CONVERGED  vmin={vm.min():.3f} vmax={vm.max():.3f}")
-        except CONVERGENCE_ERRORS as e:
+        except POWER_FLOW_ERRORS as e:
             # fall back to a fresh dc-init iwamoto, then plain nr.
-            # Anything that is not a convergence failure propagates untouched.
+            # Anything that is not a power-flow convergence failure propagates.
             ok = False
             last = e
             for kw in (dict(algorithm="iwamoto_nr", init="dc", max_iteration=150),
@@ -200,7 +222,7 @@ def run(net, verbose=True):
                     if verbose:
                         print(f"  continuation step {k+1} recovered via {kw['algorithm']}")
                     break
-                except CONVERGENCE_ERRORS as e2:
+                except POWER_FLOW_ERRORS as e2:
                     last = e2
             if not ok:
                 print(f"  continuation step {k+1} (load x{s:.2f}) FAILED: {last}")

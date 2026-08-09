@@ -8,20 +8,30 @@
 #   * simulate - run the full NOAA MIDAS smoke + the 5-day wildfire / grid
 #                co-simulation and publish the analysis as artifacts
 #
-# Every stage runs automatically and every job blocks the pipeline on failure.
+# Where the jobs run:
+#
+#   any branch   lint + unit                     ~1 min
+#   main only    + system + midas_smoke + five_day_simulation   ~13 min total
+#
+# Every job that runs is automatic and blocks the pipeline on failure. There are
+# no manual gates.
 #
 # The heavy stages used to be `when: manual` to keep day-to-day pushes cheap.
 # That backfired twice over: `system` had been played exactly once in the
 # project's history and the two `simulate` jobs had never run at all, so the
 # checks that actually validate the power flow were not really part of CI --
 # and because a blocking manual job leaves the pipeline in `manual` state, no
-# pipeline could ever report success on its own. The full run is ~14 min
-# (lint 18s, unit 33s, system 153s, midas_smoke 469s, five_day 149s), which is
-# the right price for a result that can be trusted.
+# pipeline could ever report success on its own. Branch rules give the same
+# cheap feature-branch pushes without either defect: on main the full suite runs
+# by itself and a failure is a red pipeline.
 #
-# To make a job optional again, add `when: manual` back to it -- but note that
-# a manual job with `allow_failure: false` blocks every later stage until it
-# is played, so prefer `allow_failure: true` for anything genuinely optional.
+# Measured on main: lint 19s, unit 33s, system 158s, midas_smoke 408s,
+# five_day 146s.
+#
+# Careful with `when: manual` if you reintroduce it: a manual job with
+# `allow_failure: false` blocks every later stage until someone plays it, which
+# is what produced the permanently-blocked pipelines. Prefer `allow_failure:
+# true` for anything genuinely optional, or a branch rule as used here.
 
 stages:
   - lint
@@ -93,12 +103,18 @@ unit:
 # ---------------------------------------------------------------------------
 system:
   stage: system
-  # Runs automatically. It used to be `when: manual`, and in the whole history
-  # of this project it had been played exactly once -- so `pytest -m slow`, the
-  # gate that actually proves the power flow is correct, was effectively not
-  # part of CI. A blocking manual job also holds the entire `simulate` stage
-  # behind it and keeps the pipeline in `manual` state forever, which is why
-  # the pipeline was never really green. 153s is worth paying on every push.
+  # Heavy stage: main only. Feature branches get lint + unit (~1 min) so day-to-day
+  # pushes stay cheap; the full ~13 min validation runs where it protects the
+  # shared history. Note this is a *rule*, not `when: manual` -- on main the job
+  # runs automatically and blocks, which is the property that was missing before.
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  # On main it runs automatically and blocks. It used to be `when: manual`, and
+  # in the whole history of this project it had been played exactly once -- so
+  # `pytest -m slow`, the gate that actually proves the power flow is correct,
+  # was effectively not part of CI. A blocking manual job also holds the entire
+  # `simulate` stage behind it and keeps the pipeline in `manual` state forever,
+  # which is why no pipeline was ever really green.
   allow_failure: false
   timeout: 45m
   before_script:
@@ -126,10 +142,16 @@ system:
 # ---------------------------------------------------------------------------
 midas_smoke:
   stage: simulate
-  # Mandatory: runs automatically and fails the pipeline. Previously
+  # Heavy stage: main only. Feature branches get lint + unit (~1 min) so day-to-day
+  # pushes stay cheap; the full ~13 min validation runs where it protects the
+  # shared history. Note this is a *rule*, not `when: manual` -- on main the job
+  # runs automatically and blocks, which is the property that was missing before.
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  # Mandatory on main: runs automatically and fails the pipeline. Previously
   # `when: manual` + `allow_failure: true`, i.e. a job that had never once
   # executed and could not have failed if it had. Now that it genuinely runs
-  # the co-simulation end to end (~8 min, 7200 steps) it is the only check
+  # the co-simulation end to end (~7 min, 7200 steps) it is the only check
   # that exercises MIDAS + midas-powergrid + the scenario YAML together.
   allow_failure: false
   timeout: 45m
@@ -169,8 +191,14 @@ midas_smoke:
 # ---------------------------------------------------------------------------
 five_day_simulation:
   stage: simulate
-  # Also automatic: while any job in the pipeline is a blocking manual gate,
-  # the pipeline's overall status stays `manual` and can never report success.
+  # Heavy stage: main only. Feature branches get lint + unit (~1 min) so day-to-day
+  # pushes stay cheap; the full ~13 min validation runs where it protects the
+  # shared history. Note this is a *rule*, not `when: manual` -- on main the job
+  # runs automatically and blocks, which is the property that was missing before.
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  # Also automatic on main: while any job in the pipeline is a blocking manual
+  # gate, the pipeline's overall status stays `manual` and can never succeed.
   allow_failure: false
   timeout: 90m
   before_script:
