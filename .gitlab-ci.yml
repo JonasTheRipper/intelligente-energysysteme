@@ -132,7 +132,7 @@ midas_smoke:
     - ls -la _outputs
     # An empty _outputs means the scenario did not write a store -- that is a
     # failure even if every command above happened to exit 0.
-    - test -n "$(ls -A _outputs 2>/dev/null)" || { echo "ERROR: _outputs is empty, the smoke scenario produced no store output"; exit 1; }
+    - if [ -z "$(ls -A _outputs 2>/dev/null)" ]; then echo "ERROR - _outputs is empty, the smoke scenario produced no store output"; exit 1; fi
   artifacts:
     when: always
     paths:
