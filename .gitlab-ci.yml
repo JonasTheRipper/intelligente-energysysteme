@@ -1,16 +1,27 @@
 # GitLab CI/CD for the SoCal wildfire / grid co-simulation.
 #
-# Design: "light CI + manual heavy stage" (per project scope).
+# Stages:
 #   * lint     - flake8 style/error check                (fast, every push)
 #   * unit     - fast unit + smoke tests, no grid/PF      (fast, every push)
 #   * system   - heavy system tests: load the 5.9 MB grid, run pandapower
-#                dispatch + power flow, exercise the palaestrAI env  (MANUAL)
+#                dispatch + power flow, exercise the palaestrAI env
 #   * simulate - run the full NOAA MIDAS smoke + the 5-day wildfire / grid
-#                co-simulation and publish the analysis as artifacts (MANUAL)
+#                co-simulation and publish the analysis as artifacts
 #
-# The two heavy stages are `when: manual` so day-to-day pushes stay cheap; an
-# engineer triggers them from the pipeline view (or they run on `main` / tags)
-# when a full validation is wanted.
+# Every stage runs automatically and every job blocks the pipeline on failure.
+#
+# The heavy stages used to be `when: manual` to keep day-to-day pushes cheap.
+# That backfired twice over: `system` had been played exactly once in the
+# project's history and the two `simulate` jobs had never run at all, so the
+# checks that actually validate the power flow were not really part of CI --
+# and because a blocking manual job leaves the pipeline in `manual` state, no
+# pipeline could ever report success on its own. The full run is ~14 min
+# (lint 18s, unit 33s, system 153s, midas_smoke 469s, five_day 149s), which is
+# the right price for a result that can be trusted.
+#
+# To make a job optional again, add `when: manual` back to it -- but note that
+# a manual job with `allow_failure: false` blocks every later stage until it
+# is played, so prefer `allow_failure: true` for anything genuinely optional.
 
 stages:
   - lint
@@ -44,8 +55,12 @@ lint:
   script:
     - pip install flake8 -q
     # Hard-fail only on real errors (syntax, undefined names); style is advisory.
-    - flake8 wildfire_cma palaestrai_socal tests --count --select=E9,F63,F7,F82 --show-source --statistics
-    - flake8 wildfire_cma palaestrai_socal tests --count --max-line-length=100 --extend-ignore=E203,W503 --exit-zero --statistics
+    # socal_grid, analysis and midas_socal were missing from these paths, so the
+    # power-flow core itself was never linted -- an undefined name in
+    # dispatch_and_run.py would only have surfaced at run time. All three pass
+    # the hard gate today, so adding them costs nothing and closes the hole.
+    - flake8 wildfire_cma palaestrai_socal socal_grid analysis midas_socal tests --count --select=E9,F63,F7,F82 --show-source --statistics
+    - flake8 wildfire_cma palaestrai_socal socal_grid analysis midas_socal tests --count --max-line-length=100 --extend-ignore=E203,W503 --exit-zero --statistics
 
 # ---------------------------------------------------------------------------
 # Stage 2 - unit + smoke  (fast, every push)
@@ -74,11 +89,16 @@ unit:
     expire_in: 1 week
 
 # ---------------------------------------------------------------------------
-# Stage 3 - system  (heavy: grid dispatch + power flow + palaestrAI env)  MANUAL
+# Stage 3 - system  (heavy: grid dispatch + power flow + palaestrAI env)
 # ---------------------------------------------------------------------------
 system:
   stage: system
-  when: manual
+  # Runs automatically. It used to be `when: manual`, and in the whole history
+  # of this project it had been played exactly once -- so `pytest -m slow`, the
+  # gate that actually proves the power flow is correct, was effectively not
+  # part of CI. A blocking manual job also holds the entire `simulate` stage
+  # behind it and keeps the pipeline in `manual` state forever, which is why
+  # the pipeline was never really green. 153s is worth paying on every push.
   allow_failure: false
   timeout: 45m
   before_script:
@@ -102,12 +122,16 @@ system:
     expire_in: 1 week
 
 # ---------------------------------------------------------------------------
-# Stage 4a - NOAA MIDAS smoke run  (heavy)  MANUAL
+# Stage 4a - NOAA MIDAS smoke run  (heavy)
 # ---------------------------------------------------------------------------
 midas_smoke:
   stage: simulate
-  when: manual
-  allow_failure: true
+  # Mandatory: runs automatically and fails the pipeline. Previously
+  # `when: manual` + `allow_failure: true`, i.e. a job that had never once
+  # executed and could not have failed if it had. Now that it genuinely runs
+  # the co-simulation end to end (~8 min, 7200 steps) it is the only check
+  # that exercises MIDAS + midas-powergrid + the scenario YAML together.
+  allow_failure: false
   timeout: 45m
   variables:
     # Without this, Python block-buffers stdout through the tee pipeline and the
@@ -141,11 +165,12 @@ midas_smoke:
     expire_in: 1 week
 
 # ---------------------------------------------------------------------------
-# Stage 4b - full 5-day wildfire / grid co-simulation + analysis  (heavy)  MANUAL
+# Stage 4b - full 5-day wildfire / grid co-simulation + analysis  (heavy)
 # ---------------------------------------------------------------------------
 five_day_simulation:
   stage: simulate
-  when: manual
+  # Also automatic: while any job in the pipeline is a blocking manual gate,
+  # the pipeline's overall status stays `manual` and can never report success.
   allow_failure: false
   timeout: 90m
   before_script:

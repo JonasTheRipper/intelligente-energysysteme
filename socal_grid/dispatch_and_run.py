@@ -47,6 +47,27 @@ FRAC_LOCAL   = 0.90    # fraction of each bus load met by co-located generation
 LOSS_MARGIN  = 1.03    # assume ~3% losses for reporting/headroom
 CONT_STEPS   = [0.30, 0.60, 1.00]   # load-continuation schedule
 
+# Exceptions that mean "this power flow did not converge" and nothing else.
+#
+# run() reacts to a failed pp.runpp by retrying with a different algorithm and,
+# if that also fails, reporting the step as unsolved and returning False. That
+# is the correct response to genuine divergence. It is the wrong response to a
+# broken dependency: a KeyError, AttributeError, ImportError or TypeError out of
+# runpp means the model or the installed pandapower is wrong, and silently
+# downgrading it to "did not converge" produces a full set of zeroed KPIs that
+# looks like a legitimate blackout result. That is exactly how the split
+# ZIP-load column change (const_z_percent -> const_z_p_percent) slipped through
+# as plausible-looking output instead of an error.
+#
+# Verified against pandapower 3.4.0: a divergent net raises
+# pandapower.auxiliary.LoadflowNotConverged, which derives from ppException,
+# NOT from NetCalculationNotConverged. Keep this tuple minimal -- widening it to
+# ppException would pull configuration and validation errors back under the
+# fallback and reintroduce the silent-zero failure mode. numpy.linalg.LinAlgError
+# is deliberately excluded: a singular Jacobian has not been observed on this
+# model, and if it ever is, it should surface loudly and be added on purpose.
+CONVERGENCE_ERRORS = (pp.LoadflowNotConverged,)
+
 
 def strengthen(net):
     """Apply the electrical sanitisation that makes the equivalent network solve.
@@ -165,9 +186,11 @@ def run(net, verbose=True):
                 vm = net.res_bus.vm_pu.dropna()
                 print(f"  continuation step {k+1}/{len(CONT_STEPS)} "
                       f"(load x{s:.2f}) CONVERGED  vmin={vm.min():.3f} vmax={vm.max():.3f}")
-        except Exception as e:
-            # fall back to a fresh dc-init iwamoto, then plain nr
+        except CONVERGENCE_ERRORS as e:
+            # fall back to a fresh dc-init iwamoto, then plain nr.
+            # Anything that is not a convergence failure propagates untouched.
             ok = False
+            last = e
             for kw in (dict(algorithm="iwamoto_nr", init="dc", max_iteration=150),
                        dict(algorithm="nr", init="dc", max_iteration=150)):
                 try:
@@ -177,7 +200,7 @@ def run(net, verbose=True):
                     if verbose:
                         print(f"  continuation step {k+1} recovered via {kw['algorithm']}")
                     break
-                except Exception as e2:
+                except CONVERGENCE_ERRORS as e2:
                     last = e2
             if not ok:
                 print(f"  continuation step {k+1} (load x{s:.2f}) FAILED: {last}")

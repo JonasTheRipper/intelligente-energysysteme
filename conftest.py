@@ -1,18 +1,18 @@
 """Pytest configuration: auto-mark tests as ``unit`` or ``slow``.
 
-The light-CI / heavy-manual split is driven entirely by markers so a single
+The fast-unit / heavy-system split is driven entirely by markers so a single
 test suite serves both. We classify by module:
 
 * ``test_cma``, ``test_postgis`` and ``test_gis`` are pure unit tests
   (numpy only -- no grid, no power flow, no pandapower/palaestrai imports).
 * ``test_damage_mapper``, ``test_palaestrai_env`` and ``test_midas_steps``
   load the 5.9 MB SoCal grid and run a pandapower dispatch / power flow, so
-  they are marked ``slow`` (run via the manual ``system`` CI stage or locally).
+  they are marked ``slow`` (run in the ``system`` CI stage, or locally).
 
 CI usage::
 
     pytest -m unit          # fast stage, every push
-    pytest -m slow          # manual stage, full grid co-simulation
+    pytest -m slow          # system stage, full grid co-simulation
 """
 
 import os
