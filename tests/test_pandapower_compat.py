@@ -24,13 +24,30 @@ from __future__ import annotations
 import json
 import os
 
+import importlib.metadata as importlib_metadata
+
 import pytest
 
 # The lightweight `unit` CI stage installs numpy/pandas/scipy only, so this
 # module must stay collectable without pandapower. Everything that needs it is
 # marked `slow` and runs in the `system` stage, which installs the real
 # requirements.
-pp = pytest.importorskip("pandapower", reason="pandapower not installed")
+#
+# Deliberately NOT pytest.importorskip: because pandapower is installed with
+# --no-deps, a missing transitive dependency makes `import pandapower` raise
+# ModuleNotFoundError, and importorskip would quietly turn that into a skip --
+# silently disabling the very guards this module exists to provide. So we skip
+# only when pandapower is genuinely not installed, and let the ImportError
+# propagate when it is installed but unusable.
+try:
+    PANDAPOWER_VERSION = importlib_metadata.version("pandapower")
+except importlib_metadata.PackageNotFoundError:
+    pytest.skip(
+        "pandapower not installed (lightweight unit stage)",
+        allow_module_level=True,
+    )
+
+import pandapower as pp  # noqa: E402  -- must follow the skip above
 
 pytestmark = pytest.mark.slow
 
@@ -91,6 +108,41 @@ def test_runpp_accepts_the_zip_load_columns():
 
     pp.runpp(net)
     assert net["converged"]
+
+
+def test_pandapower_runtime_dependencies_are_installed():
+    """--no-deps must not leave pandapower's own dependencies behind.
+
+    pandapower is installed with --no-deps (requirements-nodeps.txt), so pip
+    does not pull in pandera, deepdiff, geojson and friends -- requirements.txt
+    has to list them by hand. When pandapower is bumped and adds a dependency,
+    that hand-maintained list silently falls out of date and `import
+    pandapower` dies at collection time.
+
+    This walks pandapower's declared non-extra requirements and asserts each is
+    actually present, so the failure names the missing package instead.
+    """
+    from packaging.requirements import Requirement
+
+    declared = importlib_metadata.requires("pandapower") or []
+
+    missing = []
+    for raw in declared:
+        req = Requirement(raw)
+        # Skip optional extras -- we only install the base feature set.
+        if req.marker is not None and not req.marker.evaluate({"extra": ""}):
+            continue
+        try:
+            importlib_metadata.version(req.name)
+        except importlib_metadata.PackageNotFoundError:
+            missing.append(req.name)
+
+    assert not missing, (
+        f"pandapower {PANDAPOWER_VERSION} declares dependencies that are not "
+        f"installed: {sorted(missing)}. pandapower is installed with --no-deps, "
+        "so these must be listed explicitly in requirements.txt. See the "
+        "'pandapower's own runtime dependencies' block there."
+    )
 
 
 @pytest.mark.parametrize("rel_path", GRID_JSONS)

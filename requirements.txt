@@ -20,8 +20,22 @@ numpy==1.26.4
 pandas==2.1.4
 scipy>=1.11,<2
 # pandapower is intentionally NOT listed here -- see requirements-nodeps.txt.
-networkx>=3.0
+networkx>=3.4
 matplotlib>=3.7
+
+# pandapower's own runtime dependencies. Because pandapower is installed with
+# --no-deps (see requirements-nodeps.txt), pip will NOT pull these in for us --
+# without them `import pandapower` fails with ModuleNotFoundError. Every one of
+# these resolves cleanly against the numpy/pandas pins above; the ONLY bound we
+# deliberately override is pandapower's own pandas~=2.3.
+# Keep in sync when bumping pandapower: compare against `Requires-Dist` in its
+# wheel metadata.
+packaging~=25.0
+tqdm~=4.67
+deepdiff~=8.6
+geojson~=3.2
+typing_extensions~=4.9
+pandera~=0.26.1
 
 # palaestrAI / arsenAI stack (OFFIS ARL). palaestrai-mosaik + midas-palaestrai
 # pull in mosaik and the MIDAS modules used by the scenario.
