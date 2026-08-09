@@ -90,6 +90,8 @@ system:
     - pip install -q -r requirements.txt
     # pandapower must bypass the resolver -- see requirements-nodeps.txt
     - pip install -q --no-deps -r requirements-nodeps.txt
+    # requirements.txt is runtime-only; this stage also needs the test runner.
+    - pip install -q pytest
     - python -m pytest -m slow -v --junitxml=report-system.xml
   artifacts:
     when: always
