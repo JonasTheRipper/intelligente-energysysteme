@@ -29,9 +29,17 @@ socal_midas:
     socal:
       start_date: 2024-07-16 00:00:00-0700
 
+  # Repo-relative on purpose. midas-powergrid hands `gridfile` straight to
+  # pandapower.from_json() with no data_path resolution and no '~' expansion,
+  # so an absolute /home/<user>/... path here breaks on any machine with a
+  # different HOME -- notably CI, which runs as root and therefore prepares its
+  # artefacts under /root/.config/midas/midas_data. prepare_midas.py writes the
+  # grid to BOTH the MIDAS data dir and here in the repo, so this path is always
+  # freshly generated. run_sim.sh cd's to the repo root before invoking midasctl,
+  # which is what makes the relative path resolve.
   powergrid_params:
     socal:
-      gridfile: /home/user/.config/midas/midas_data/socal_grid_midas.json
+      gridfile: midas_socal/socal_grid_midas.json
 
   # NOAA weather (NCEI ISD by default). The MIDAS `weather` simulator reads the
   # NOAA-derived CSV produced by prepare_midas.py from the MIDAS data dir.
@@ -75,3 +83,21 @@ socal_midas:
       data_step_size: 900
       combined_mapping_filename: load_mapping.json
       prefer_combined_mapping_from_file: true
+
+#######################################################################
+# Short smoke variant used by CI (`run_sim.sh --smoke`).
+#
+# Inherits everything from socal_midas and only shortens the horizon, so the
+# two scenarios cannot drift apart. Previously run_sim.sh looked for a separate
+# socal_midas_smoke.yml file that was never committed and silently fell back to
+# the FULL one-day scenario -- a "smoke" job that actually ran the whole thing.
+#
+# 2 h at 15 min = 8 steps: enough to exercise config, grid load, power flow and
+# the store, fast enough for CI.
+#######################################################################
+socal_midas_smoke:
+  parent: socal_midas
+  end: 2*60*60
+
+  store_params:
+    filename: socal_midas_smoke.csv

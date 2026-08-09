@@ -109,6 +109,10 @@ midas_smoke:
   when: manual
   allow_failure: true
   timeout: 45m
+  variables:
+    # Without this, Python block-buffers stdout through the tee pipeline and the
+    # job looks hung for minutes before dumping everything at exit.
+    PYTHONUNBUFFERED: "1"
   before_script:
     - python -V
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
@@ -118,13 +122,22 @@ midas_smoke:
     # pandapower must bypass the resolver -- see requirements-nodeps.txt
     - pip install -q --no-deps -r requirements-nodeps.txt
     # Prepare the MIDAS artefacts + NOAA weather CSV, then run a short scenario.
-    - python midas_socal/prepare_midas.py || echo "prepare step produced artefacts"
-    - bash midas_socal/run_sim.sh --smoke || true
-    - ls -la _outputs || true
+    #
+    # No `|| true` / `|| echo` here any more. Both steps used to be masked, and
+    # run_sim.sh sent all of its output to midas_socal/run.log, which was not an
+    # artifact -- so this job reported success in 90s having silently executed
+    # nothing at all and uploaded an empty _outputs/. Failures must be visible.
+    - python midas_socal/prepare_midas.py
+    - bash midas_socal/run_sim.sh --smoke
+    - ls -la _outputs
+    # An empty _outputs means the scenario did not write a store -- that is a
+    # failure even if every command above happened to exit 0.
+    - test -n "$(ls -A _outputs 2>/dev/null)" || { echo "ERROR: _outputs is empty, the smoke scenario produced no store output"; exit 1; }
   artifacts:
     when: always
     paths:
       - _outputs/
+      - midas_socal/run.log
     expire_in: 1 week
 
 # ---------------------------------------------------------------------------
