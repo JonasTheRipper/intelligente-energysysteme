@@ -120,7 +120,7 @@ system:
   before_script:
     - python -V
     # runtime libs some wheels dlopen (OpenMP for numba/scipy); build tools as fallback
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 git >/dev/null
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
@@ -159,7 +159,7 @@ midas_smoke:
     PYTHONUNBUFFERED: "1"
   before_script:
     - python -V
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 git >/dev/null
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
@@ -199,7 +199,7 @@ five_day_simulation:
   timeout: 90m
   before_script:
     - python -V
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 >/dev/null
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends build-essential libgomp1 git >/dev/null
     - python -m pip install --upgrade pip -q
   script:
     - pip install -q -r requirements.txt
