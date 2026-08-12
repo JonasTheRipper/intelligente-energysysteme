@@ -53,19 +53,20 @@ pandapower==3.4.0
 # palaestrAI / arsenAI stack (OFFIS ARL). palaestrai-mosaik + midas-palaestrai
 # pull in mosaik and the MIDAS modules used by the scenario.
 #
-# NOTE: the pandas~=2.3 relaxation and the SQLAlchemy 2.0 migration it requires
-# are not in 3.5.11. Until a release containing them exists, install palaestrAI
-# from the branch:
-#     palaestrai @ git+https://gitlab.com/arl2/palaestrai.git@hotfix/attach-ack-timeout-for-fast-failures
-palaestrai>=3.5.12
+# palaestrai 3.5.11 on PyPI pins pandas~=2.1.4 and SQLAlchemy~=1.4.54,
+# which conflict with the pins above. Until a release containing the
+# pandas 2.3 / SQLAlchemy 2.0 migration (MR !498) is on PyPI, install from
+# the branch. Switch back to a version pin (e.g. palaestrai>=3.5.12) once
+# that release exists.
+palaestrai @ git+https://gitlab.com/arl2/palaestrai.git@feature/sqlalchemy2-pandas2.3#egg=palaestrai
 palaestrai-mosaik==3.5.9
 midas-palaestrai==3.5.9
 
 # MIDAS power-grid simulator (needed by the firefighting experiment's socal_grid
-# environment). 2.1.2 contains the get_outputs() perf change; until it is
-# released, install from the branch:
-#     midas-powergrid @ git+https://gitlab.com/midas-mosaik/midas-powergrid.git@feature/perf-get-outputs-and-runpp-options
-midas-powergrid>=2.1.2
+# environment). 2.1.2 (get_outputs() perf change) is merged to main but not yet
+# on PyPI. 2.1.1 works fine for the dependency upgrade; switch to >=2.1.2 once
+# it is released.
+midas-powergrid==2.1.1
 
 # The remaining MIDAS simulator modules named in midas_socal/socal_midas.yml
 # (`modules: [store, timesim, powergrid, weather, powerseries]`). MIDAS resolves
