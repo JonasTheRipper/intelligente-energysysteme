@@ -1,59 +1,71 @@
 # Core runtime dependencies for the SoCal wildfire / grid co-simulation.
 #
-# !! This file is only HALF the install. Always follow it with:
-#        pip install --no-deps -r requirements-nodeps.txt
-#    which brings in pandapower. See requirements-nodeps.txt for why it
-#    cannot go through pip's resolver.
+# This file is the COMPLETE install:
+#     pip install -r requirements.txt
+#
+# It used to be only half of it -- pandapower had to be forced in afterwards
+# with `pip install --no-deps -r requirements-nodeps.txt`, because palaestrAI
+# pinned pandas~=2.1.4 while pandapower >= 3.2 declares pandas~=2.3, which pip
+# rightly reported as ResolutionImpossible. That is fixed at the source:
+# palaestrAI now allows pandas~=2.3, so pandapower installs through the normal
+# resolver with its own dependencies and requirements-nodeps.txt is gone.
 #
 # Version selection rationale (Aug 2026):
-# - palaestrAI 3.5.11 hard-pins numpy~=1.26.4 and pandas~=2.1.4, so numpy and
-#   pandas are frozen here to match.
-# - pandapower must be >= 3.2 for the stored grid JSONs, but its own declared
-#   pins conflict with the two above, so it lives in requirements-nodeps.txt.
-# - simbench 1.6.2 requires pandapower>=3.4.0 and would drag pandas 2.3 back
-#   in through the resolver; 1.6.1 works and is what we test against.
+# - pandas 2.3 is the ceiling, not a choice: pandapower 3.4.0 declares
+#   pandas~=2.3, and pandas 3.x is not yet supported by pandapower.
+# - numpy stays on 1.26.4 because palaestrAI pins numpy~=1.26.4. Nothing here
+#   needs numpy 2: pandapower 3.4.0 accepts numpy>=1.26,<2.4 and pandas 2.3
+#   needs only numpy>=1.26 on py3.12.
+#   Moving to pandapower 3.5.x WOULD force numpy 2, because it requires
+#   scipy~=1.18 on py3.12 and scipy 1.18 requires numpy>=2.0. That is a
+#   separate migration; do not start it by bumping this file.
+# - pandapower must be >= 3.2 for the stored grid JSONs (see the note on the
+#   pandapower line below). tests/test_pandapower_compat.py enforces this.
 #
-# Do not bump numpy, pandas, pandapower, or simbench without re-validating
-# BOTH the test suite and a real MIDAS run -- an incompatible pandapower fails
+# Power-flow results were verified bit-identical between pandas 2.1.4 and
+# 2.3.3 across five reference grids (all result tables hashed at full float64
+# precision), so this bump does not move any published number.
+#
+# Do not bump numpy, pandas, pandapower, or simbench without re-validating BOTH
+# the test suite and a real MIDAS run -- an incompatible pandapower fails
 # completely silently and produces plausible-looking all-zero results.
 numpy==1.26.4
-pandas==2.1.4
+pandas==2.3.3
 scipy>=1.11,<2
-# pandapower is intentionally NOT listed here -- see requirements-nodeps.txt.
 networkx>=3.4
 matplotlib>=3.7
 
-# pandapower's own runtime dependencies. Because pandapower is installed with
-# --no-deps (see requirements-nodeps.txt), pip will NOT pull these in for us --
-# without them `import pandapower` fails with ModuleNotFoundError. Every one of
-# these resolves cleanly against the numpy/pandas pins above; the ONLY bound we
-# deliberately override is pandapower's own pandas~=2.3.
-# Keep in sync when bumping pandapower: compare against `Requires-Dist` in its
-# wheel metadata.
-packaging~=25.0
-tqdm~=4.67
-deepdiff~=8.6
-geojson~=3.2
-typing_extensions~=4.9
-pandera~=0.26.1
+# pandapower >= 3.2 is required, not merely preferred. Our stored grid JSONs
+# (socal_grid/socal_grid.json, midas_socal/*.json) use the split ZIP-load
+# columns const_z_p_percent / const_i_p_percent, introduced in 3.2. On
+# pandapower 3.1.x, runpp() looks for the old combined const_z_percent and
+# raises KeyError; socal_grid.dispatch_and_run treats that as a non-convergent
+# step, so a too-old pandapower does NOT crash the run -- it completes, exits 0,
+# and silently produces an experiment in which the power flow never solved, no
+# load was ever shed, and every grid KPI is exactly zero.
+#
+# pandapower now brings its own dependencies (packaging, tqdm, deepdiff,
+# geojson, typing_extensions, pandera, ...) through the resolver. They used to
+# be duplicated here by hand because of the --no-deps install; that hand-
+# maintained mirror is deliberately removed -- it only drifted.
+pandapower==3.4.0
 
 # palaestrAI / arsenAI stack (OFFIS ARL). palaestrai-mosaik + midas-palaestrai
 # pull in mosaik and the MIDAS modules used by the scenario.
 #
-# To pick up palaestrAI's attach-ACK hotfix (arl2/palaestrai MR !497) before it
-# is released, replace the palaestrai line with:
+# NOTE: the pandas~=2.3 relaxation and the SQLAlchemy 2.0 migration it requires
+# are not in 3.5.11. Until a release containing them exists, install palaestrAI
+# from the branch:
 #     palaestrai @ git+https://gitlab.com/arl2/palaestrai.git@hotfix/attach-ack-timeout-for-fast-failures
-palaestrai==3.5.11
+palaestrai>=3.5.12
 palaestrai-mosaik==3.5.9
 midas-palaestrai==3.5.9
 
 # MIDAS power-grid simulator (needed by the firefighting experiment's socal_grid
-# environment).
-#
-# To pick up the get_outputs() perf change (midas-mosaik/midas-powergrid MR !16)
-# before it is released, replace the midas-powergrid line with:
+# environment). 2.1.2 contains the get_outputs() perf change; until it is
+# released, install from the branch:
 #     midas-powergrid @ git+https://gitlab.com/midas-mosaik/midas-powergrid.git@feature/perf-get-outputs-and-runpp-options
-midas-powergrid==2.1.1
+midas-powergrid>=2.1.2
 
 # The remaining MIDAS simulator modules named in midas_socal/socal_midas.yml
 # (`modules: [store, timesim, powergrid, weather, powerseries]`). MIDAS resolves
@@ -69,7 +81,10 @@ midas-store==2.1.0
 midas-timesim==2.1.1
 midas-weather==2.1.0
 midas-powerseries==2.1.0
-simbench==1.6.1
+# simbench 1.6.2 (was 1.6.1) requires pandapower>=3.4.0 and lxml>=6.0. Both are
+# satisfied now; under the old pandas 2.1.4 pin it would have dragged pandas 2.3
+# back in through the resolver, which is why 1.6.1 was held here.
+simbench==1.6.2
 natsort>=8.4
 joblib>=1.3
 

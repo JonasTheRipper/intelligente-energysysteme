@@ -111,16 +111,18 @@ def test_runpp_accepts_the_zip_load_columns():
 
 
 def test_pandapower_runtime_dependencies_are_installed():
-    """--no-deps must not leave pandapower's own dependencies behind.
+    """pandapower's own dependencies must all be present.
 
-    pandapower is installed with --no-deps (requirements-nodeps.txt), so pip
-    does not pull in pandera, deepdiff, geojson and friends -- requirements.txt
-    has to list them by hand. When pandapower is bumped and adds a dependency,
-    that hand-maintained list silently falls out of date and `import
-    pandapower` dies at collection time.
+    Historically pandapower had to be installed with `--no-deps` (palaestrAI
+    pinned pandas~=2.1.4 while pandapower declares pandas~=2.3), so pip did not
+    pull in pandera, deepdiff, geojson and friends and requirements.txt listed
+    them by hand -- a mirror that silently fell out of date whenever pandapower
+    added a dependency, killing `import pandapower` at collection time.
 
-    This walks pandapower's declared non-extra requirements and asserts each is
-    actually present, so the failure names the missing package instead.
+    That workaround is gone: pandapower now installs through the resolver with
+    its own dependencies. This check is kept as a cheap environment guard, since
+    a half-installed or hand-assembled env fails the same way, and the failure
+    names the missing package instead of dying on an opaque ImportError.
     """
     from packaging.requirements import Requirement
 
@@ -139,9 +141,9 @@ def test_pandapower_runtime_dependencies_are_installed():
 
     assert not missing, (
         f"pandapower {PANDAPOWER_VERSION} declares dependencies that are not "
-        f"installed: {sorted(missing)}. pandapower is installed with --no-deps, "
-        "so these must be listed explicitly in requirements.txt. See the "
-        "'pandapower's own runtime dependencies' block there."
+        f"installed: {sorted(missing)}. pandapower is installed through pip's "
+        "resolver, so this normally means the environment was assembled by hand "
+        "or with --no-deps. Reinstall with `pip install -r requirements.txt`."
     )
 
 

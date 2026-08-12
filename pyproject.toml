@@ -13,8 +13,14 @@ authors = [{ name = "Eric MSP Veith" }]
 keywords = ["wildfire", "power-grid", "palaestrai", "midas", "cellular-automaton", "guardian"]
 
 dependencies = [
+    # numpy stays on 1.26.4 because palaestrAI pins numpy~=1.26.4. Nothing else
+    # in the stack requires numpy 2: pandapower 3.4.0 accepts >=1.26,<2.4 and
+    # pandas 2.3 needs only >=1.26 on py3.12.
     "numpy==1.26.4",
-    "pandas==2.1.4",
+    # Was pandas==2.1.4, which contradicted pandapower's pandas~=2.3 and made
+    # `pip install -e .` fail with ResolutionImpossible. 2.3.x satisfies both.
+    "pandas>=2.3,<2.4",
+    # pandapower 3.4.0 declares scipy<1.17, so this resolves to scipy 1.16.x.
     "scipy>=1.11,<2",
     "pandapower==3.4.0",
     "networkx>=3.0",

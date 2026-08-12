@@ -1,10 +1,8 @@
 # Development / CI dependencies (in addition to requirements.txt).
 #
-# NOTE: this does NOT pull in pandapower. `-r` runs through pip's resolver,
-# and pandapower's declared pins conflict with the numpy/pandas versions
-# palaestrAI requires. After installing this file, run:
-#     pip install --no-deps -r requirements-nodeps.txt
-# See requirements-nodeps.txt for the full explanation.
+# This pulls in requirements.txt in full, pandapower included. It used to
+# require a second `--no-deps` install because palaestrAI's pandas~=2.1.4
+# pin conflicted with pandapower's pandas~=2.3; that is fixed at the source.
 -r requirements.txt
 
 pytest>=7.4
