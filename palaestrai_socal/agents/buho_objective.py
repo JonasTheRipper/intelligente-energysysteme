@@ -1,4 +1,5 @@
 from palaestrai.agent import Objective
+import numpy as np
 
 
 class BurnedHousesObjective(Objective):
@@ -22,4 +23,6 @@ class BurnedHousesObjective(Objective):
 
     def calculate_reward(self, int: burned_houses) -> float:
         baseline_reward = 1.0
-        return baseline_reward - (burned_houses / self._healthy_houses)
+        return np.clip(
+            baseline_reward - (burned_houses / self._healthy_houses), 0.0, 1.0
+        )
