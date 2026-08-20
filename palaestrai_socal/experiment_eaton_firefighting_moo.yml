@@ -41,12 +41,15 @@
 #    muscle looks its sensors up by suffix and ignores the rest, so the extra
 #    subscription does not change behaviour.
 #
-# `base_served_mw: 241.5` is the combined nameplate load of exactly those 14
-# sensors. The SaidiObjective default of 1.0 suits a normalised testbed grid;
-# against a 241.5 MW subscription it makes `clip(base - served, 0, base)`
-# identically zero -- the same silent-zero failure as above, by a different
-# route. If a run shows the SAIDI axis contributing nothing, check this number
-# first (MooObjective.running_shares() reports the per-axis split).
+# `base_served_mw: "auto"` latches the SAIDI baseline from the first observed
+# step instead of hard-coding it, matching how analysis.store_readers.read_run
+# derives it offline. A constant here has to equal the sum of exactly those 14
+# sensors, and nothing enforces that: the default 1.0 pins the charge at zero,
+# while a nameplate estimate of 241.5 MW against the actual 232.237 MW charged
+# a phantom 9.26 MW outage on every step (measured: a constant -19.18 reward on
+# a step where nothing had happened). Auto removes the coupling entirely.
+# If a run still shows one axis contributing nothing, MooObjective.
+# running_shares() reports the per-axis split.
 #
 # Run (heavy; ~30-45 min, ~5 GB RAM peak, phases sequential):
 #   env PYTHONPATH=$PWD palaestrai -c runtime.conf.yaml start \
@@ -170,7 +173,7 @@ schedule:
               beta: 0.5
               saidi_params:
                 scale: 60.0
-                base_served_mw: 241.5
+                base_served_mw: "auto"
                 dt_min: 60.0
               houses_params:
                 scale: 0.02
@@ -366,7 +369,7 @@ schedule:
               beta: 0.5
               saidi_params:
                 scale: 60.0
-                base_served_mw: 241.5
+                base_served_mw: "auto"
                 dt_min: 60.0
               houses_params:
                 scale: 0.02
@@ -567,7 +570,7 @@ schedule:
               beta: 0.5
               saidi_params:
                 scale: 60.0
-                base_served_mw: 241.5
+                base_served_mw: "auto"
                 dt_min: 60.0
               houses_params:
                 scale: 0.02
@@ -771,7 +774,7 @@ schedule:
               beta: 0.5
               saidi_params:
                 scale: 60.0
-                base_served_mw: 241.5
+                base_served_mw: "auto"
                 dt_min: 60.0
               houses_params:
                 scale: 0.02

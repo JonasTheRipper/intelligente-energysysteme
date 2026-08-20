@@ -35,10 +35,14 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+import logging
+
 import numpy as np
 import pandas as pd
 
 from palaestrai.agent.objective import Objective
+
+LOG = logging.getLogger("palaestrai_socal.agents.saidi_objective")
 
 # same planning figure the environment / reducer use to turn MW -> customers.
 CUSTOMERS_PER_MW = 200.0
@@ -153,7 +157,10 @@ class SaidiObjective(Objective):
     base_served_mw:
         Baseline served load (MW) used as the SAIDI denominator reference. The
         environment's grid serves ``base_served_mw`` when no load is shed;
-        default 1.0 matches the normalised-load testbed grid.
+        default 1.0 matches the normalised-load testbed grid. Pass ``"auto"``
+        (or ``null``) to latch it from the first observation instead -- the
+        robust choice, since the correct constant depends on exactly which load
+        sensors the agent subscribes to.
     dt_min:
         Environment step length in minutes (SAIDI is customer-*minutes*).
         Default 60 (the testbed's ``env_step_min``).
@@ -177,11 +184,35 @@ class SaidiObjective(Objective):
         super().__init__(params=settings)
 
         self._scale = float(settings["scale"])
-        self._base_served_mw = float(settings["base_served_mw"])
         self._dt_min = float(settings["dt_min"])
-        
+
+        # ``base_served_mw: auto`` (or null) defers the baseline to the first
+        # observation, matching how analysis.store_readers.read_run derives it
+        # (``base_served = served_by_step[0]``). A hard-coded constant has to
+        # equal the sum of exactly the load sensors THIS agent subscribes to,
+        # which is a coupling nothing checks: too low and the charge is pinned
+        # at zero, too high and every step is charged a phantom outage. Both
+        # failures are silent. Measured on the Eaton scenario, a nameplate
+        # estimate of 241.5 MW against an actual 232.237 MW produced a constant
+        # -19.18 reward on a step where nothing had happened.
+        base_setting = settings["base_served_mw"]
+        self._auto_base = base_setting is None or (
+            isinstance(base_setting, str) and base_setting.strip().lower() == "auto"
+        )
+        self._base_served_mw = 0.0 if self._auto_base else float(base_setting)
         self._total_customers = (
             max(1.0, self._base_served_mw) * CUSTOMERS_PER_MW
+        )
+
+    def _resolve_base(self, served: float) -> None:
+        """Latch the baseline from the first observation (auto mode only)."""
+        self._base_served_mw = float(served)
+        self._total_customers = max(1.0, self._base_served_mw) * CUSTOMERS_PER_MW
+        self._auto_base = False
+        LOG.info(
+            "SaidiObjective: baseline served load latched at %.3f MW from the "
+            "first observation",
+            self._base_served_mw,
         )
 
     def internal_reward(self, memory, **kwargs) -> float:
@@ -189,6 +220,12 @@ class SaidiObjective(Objective):
         served = _served_mw(getattr(tail, "sensor_readings", None))
         if served is None:
             # no grid-load sensors this step -> nothing to charge.
+            return 0.0
+
+        if self._auto_base:
+            # The first observation defines "everything energised": charge
+            # nothing for it, then price every later shortfall against it.
+            self._resolve_base(served)
             return 0.0
 
         base = self._base_served_mw if self._base_served_mw > 0 else 1.0

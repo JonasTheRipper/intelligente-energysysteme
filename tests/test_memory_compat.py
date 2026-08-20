@@ -199,3 +199,89 @@ def test_install_does_not_modify_the_installed_package():
 
     with open(memory_mod.__file__, "rb") as fh:
         assert hashlib.sha256(fh.read()).hexdigest() == before
+
+
+# ---------------------------------------------------------------------------
+# Regression: the scripted firefighter's sensor mix under MooObjective
+# ---------------------------------------------------------------------------
+# Adding the gis.houses_* and *-load-*.p_mw scalars to the scripted
+# firefighter (so MooObjective can read both of its axes) made that agent's
+# subscription ragged for the first time: ~23k-element grid rasters alongside
+# 1-element scalars. Stock palaestrAI raises
+#   ValueError: All arrays must be of the same length
+# in ``_MuscleMemory._infos_to_df``, killing the SimulationController mid-run.
+# Both the RolloutWorker and the Learner hit it every step, because
+# ``LOG.debug("...", memory.tail(1))`` evaluates its arguments eagerly.
+
+def test_scripted_firefighter_sensor_mix_tabulates():
+    """The exact mix experiment_eaton_firefighting_moo.yml subscribes to."""
+    _memory_compat.install()
+
+    n_cells = 130 * 182
+
+    def _grid(uid):
+        return _Reading(uid, np.zeros(n_cells, dtype=np.float64))
+
+    def _scalar(uid, value=1.0):
+        return _Reading(uid, np.array([value], dtype=np.float64))
+
+    sensors = [
+        _grid("gis_world.gis.cell_state"),
+        _grid("gis_world.gis.fuel_class"),
+        _grid("gis_world.gis.elevation_m"),
+        _scalar("gis_world.gis.houses_total", 101.0),
+        _scalar("gis_world.gis.houses_burned_this_step", 2.0),
+        _scalar("gis_world.gis.houses_burned_total", 7.0),
+    ] + [
+        _scalar(f"socal_grid.Powergrid-0.0-load-{1600 + i}-{1900 + i}.p_mw", 17.25)
+        for i in range(14)
+    ]
+
+    frame = _MuscleMemory._infos_to_df(sensors)
+
+    # one row, every uid addressable, scalars still readable as scalars
+    assert len(frame) == 1
+    assert float(np.asarray(frame["gis_world.gis.houses_total"].iloc[-1]).ravel()[0]) == 101.0
+    assert np.asarray(frame["gis_world.gis.cell_state"].iloc[-1]).size == n_cells
+
+
+def test_objectives_read_both_axes_from_the_ragged_frame():
+    """End-to-end: the frame the shim builds is what MooObjective consumes."""
+    from palaestrai_socal.agents.moo_objective import MooObjective
+
+    _memory_compat.install()
+    n_cells = 400
+
+    def _si(uid, value):
+        return _Reading(uid, np.asarray(value, dtype=np.float64).ravel())
+
+    sensors = [
+        _si("gis_world.gis.cell_state", np.zeros(n_cells)),
+        _si("gis_world.gis.houses_total", [101.0]),
+        _si("gis_world.gis.houses_burned_this_step", [2.0]),
+        _si("gis_world.gis.houses_burned_total", [2.0]),
+    ] + [
+        _si(f"socal_grid.Powergrid-0.0-load-{1600+i}-{1900+i}.p_mw", [17.0])
+        for i in range(14)
+    ]
+
+    frame = _MuscleMemory._infos_to_df(sensors)
+
+    class _Tail:
+        sensor_readings = frame
+
+    class _Mem:
+        def tail(self, n=1):
+            return _Tail()
+
+    obj = MooObjective(
+        alpha=0.5, beta=0.5,
+        saidi_params={"base_served_mw": 241.5},
+        houses_params={"scale": 0.02},
+    )
+    reward = obj.internal_reward(_Mem())
+
+    # both axes must actually fire off the ragged frame
+    assert obj.last_terms["houses"]["raw"] < 0.0, "house axis dead"
+    assert obj.last_terms["saidi"]["raw"] < 0.0, "SAIDI axis dead"
+    assert reward < 0.0

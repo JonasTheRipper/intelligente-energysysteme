@@ -315,3 +315,42 @@ def test_internal_reward_from_ragged_dataframe_tail(numpy_nan_alias):
     assert reward == SaidiObjective(**_FRAME_PARAMS).internal_reward(
         _real_memory_with_loads(0.3, 0.2)
     )
+
+
+# ---------------------------------------------------------------------------
+# base_served_mw: "auto" -- latch the baseline from the first observation
+# ---------------------------------------------------------------------------
+# A hard-coded baseline has to equal the sum of exactly the load sensors the
+# agent subscribes to. Nothing enforces that coupling, and both ways of getting
+# it wrong fail silently: too low pins the charge at zero, too high charges a
+# phantom outage every step. Measured on the Eaton scenario, a nameplate
+# estimate of 241.5 MW against an actual 232.237 MW produced a constant -19.18
+# reward on a step where nothing had happened.
+
+def test_auto_base_charges_nothing_on_the_first_observation():
+    obj = SaidiObjective(base_served_mw="auto")
+    assert obj.internal_reward(_Memory(_loads(232.237))) == 0.0
+    assert obj._base_served_mw == pytest.approx(232.237)
+
+
+def test_auto_base_prices_later_shortfalls_against_the_latched_value():
+    obj = SaidiObjective(base_served_mw="auto", scale=60.0, dt_min=60.0)
+    obj.internal_reward(_Memory(_loads(200.0)))       # latches 200
+    charged = obj.internal_reward(_Memory(_loads(190.0)))
+    # 10 MW shed of a 200 MW base, for 60 min
+    expected = -((10.0 * CUSTOMERS_PER_MW * 60.0) / (200.0 * CUSTOMERS_PER_MW)) / 60.0
+    assert charged == pytest.approx(expected)
+
+
+def test_auto_base_ignores_steps_with_no_load_sensors():
+    """A missing subscription must not latch a bogus zero baseline."""
+    obj = SaidiObjective(base_served_mw="auto")
+    assert obj.internal_reward(_Memory([])) == 0.0
+    assert obj._auto_base is True          # still waiting for a real reading
+
+
+def test_explicit_base_is_unchanged_by_the_auto_option():
+    """Back-compat: every existing experiment passes a float."""
+    obj = SaidiObjective(base_served_mw=1.0, scale=60.0, dt_min=60.0)
+    assert obj._auto_base is False
+    assert obj.internal_reward(_Memory(_loads(0.5))) < 0.0

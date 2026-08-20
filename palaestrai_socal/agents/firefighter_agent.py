@@ -52,6 +52,18 @@ from palaestrai_socal import spaces  # noqa: E402
 from palaestrai_socal.agents.damage_core import (  # noqa: E402
     coerce_to_actuator_space as _coerce,
 )
+from palaestrai_socal.agents import _memory_compat  # noqa: E402
+
+# The scripted firefighter subscribes to full-grid rasters (gis.cell_state,
+# gis.fuel_class, ~23k elements each) AND scalar sensors (gis.houses_*, the
+# *-load-*.p_mw power sensors MooObjective needs). Stock palaestrAI tabulates a
+# step's readings into a rectangular DataFrame and raises
+# "All arrays must be of the same length" on that mix. RolloutWorker._remember
+# hits it every step -- note LOG.debug(..., self._memory.tail(1)) evaluates its
+# arguments eagerly, so it fires regardless of log level. Patch before any
+# Memory is touched. install() is idempotent.
+_memory_compat.install()
+
 from palaestrai_socal.agents.firefighter_core import (  # noqa: E402
     GROUND_WIND_MS,
     drops_this_step,

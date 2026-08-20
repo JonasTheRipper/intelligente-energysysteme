@@ -65,10 +65,16 @@ import numpy as np
 
 from palaestrai.agent.objective import Objective
 
+from palaestrai_socal.agents import _memory_compat
 from palaestrai_socal.agents.buho_objective import BurnedHousesObjective
 from palaestrai_socal.agents.saidi_objective import SaidiObjective
 
 LOG = logging.getLogger("palaestrai_socal.agents.moo_objective")
+
+# Reading both axes requires the agent to subscribe to grid rasters *and*
+# scalar power/house sensors, which is exactly the ragged mix stock palaestrAI
+# cannot tabulate. Installing here covers any process that loads the objective.
+_memory_compat.install()
 
 #: Per-step charge on each axis that counts as "a bad step" -> normalised -1.
 #: SAIDI: ~2x the calibrated no-firefighting baseline step (-5.5e-4).

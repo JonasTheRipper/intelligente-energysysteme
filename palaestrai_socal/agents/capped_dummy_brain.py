@@ -27,6 +27,16 @@ from __future__ import annotations
 
 from palaestrai.agent.dummy_brain import DummyBrain
 
+from palaestrai_socal.agents import _memory_compat
+
+# The Learner appends the muscle's sensor readings to the brain's Memory on
+# every step and then reads ``memory.tail(1)`` back for a debug log -- eagerly,
+# because logging evaluates its arguments. For the firefighter that mix is
+# ragged (grid rasters + scalar power/house sensors), which raises in stock
+# palaestrAI. This is a separate process from the RolloutWorker, so it needs
+# its own install(); the call is idempotent.
+_memory_compat.install()
+
 
 class CappedDummyBrain(DummyBrain):
     """A :class:`DummyBrain` whose replay Memory is bounded.
