@@ -55,11 +55,14 @@ if _ROOT not in sys.path:
 
 from palaestrai_socal import spaces  # noqa: E402
 from palaestrai_socal.agents.firefighter_core import (  # noqa: E402
-    SUPPRESS_PERSIST_STEPS, age_suppressed,
+    SUPPRESS_PERSIST_STEPS,
+    age_suppressed,
 )
 from wildfire_cma.cma import BURNING, BURNED_OUT, UNBURNED  # noqa: E402
 from wildfire_cma.gis import (  # noqa: E402
-    SOCAL_BOUNDS, synthetic_socal, socal_from_srtm,
+    SOCAL_BOUNDS,
+    synthetic_socal,
+    socal_from_srtm,
 )
 
 # how many burning cells to advertise in the gis.front_cells padded set
@@ -104,14 +107,21 @@ class GisWorldEnvironment(Environment):
         if self.use_real_dem:
             try:
                 return socal_from_srtm(
-                    nrows=self.raster_nrows, ncols=self.raster_ncols,
-                    bounds=self.bounds, seed=self.seed or 7,
+                    nrows=self.raster_nrows,
+                    ncols=self.raster_ncols,
+                    bounds=self.bounds,
+                    seed=self.seed or 7,
                 )
             except FileNotFoundError as exc:
-                LOG.warning("Real DEM unavailable (%s); synthetic", exc)
+                raise FileNotFoundError(
+                    "Real DEM file not found, set use_real_dem to false if you want to contiune with a synthetic raster. ",
+                    exc,
+                )
         return synthetic_socal(
-            nrows=self.raster_nrows, ncols=self.raster_ncols,
-            bounds=self.bounds, seed=self.seed or 7,
+            nrows=self.raster_nrows,
+            ncols=self.raster_ncols,
+            bounds=self.bounds,
+            seed=self.seed or 7,
         )
 
     # -- spaces ------------------------------------------------------------
@@ -123,45 +133,63 @@ class GisWorldEnvironment(Environment):
         r = self._raster
         nr, nc = r.shape
         front = np.argwhere(self._state == BURNING)
-        front_muts = [(int(rr), int(cc), BURNING, spaces.LAYER_FIRE)
-                      for (rr, cc) in front[:FRONT_CAP]]
+        front_muts = [
+            (int(rr), int(cc), BURNING, spaces.LAYER_FIRE)
+            for (rr, cc) in front[:FRONT_CAP]
+        ]
         front_size = int((self._state == BURNING).sum())
-        affected = int(((self._state == BURNING) |
-                        (self._state == BURNED_OUT)).sum())
+        affected = int(((self._state == BURNING) | (self._state == BURNED_OUT)).sum())
         out = [
             SensorInformation(
                 value=np.array([nr, nc], dtype=np.float64),
-                space=spaces.vector_box(0.0, 1.0e6, 2), uid="gis.grid_shape"),
+                space=spaces.vector_box(0.0, 1.0e6, 2),
+                uid="gis.grid_shape",
+            ),
             SensorInformation(
                 value=np.array(self.bounds, dtype=np.float64),
-                space=spaces.vector_box(-180.0, 180.0, 4), uid="gis.bounds"),
+                space=spaces.vector_box(-180.0, 180.0, 4),
+                uid="gis.bounds",
+            ),
             SensorInformation(
                 value=np.array([r.delta_m], dtype=np.float64),
-                space=spaces.scalar_box(0.0, 1.0e5), uid="gis.cell_size_m"),
+                space=spaces.scalar_box(0.0, 1.0e5),
+                uid="gis.cell_size_m",
+            ),
             SensorInformation(
                 value=r.fuel.astype(np.float64).ravel(),
                 space=spaces.vector_box(0.0, 64.0, self._ncell),
-                uid="gis.fuel_class"),
+                uid="gis.fuel_class",
+            ),
             SensorInformation(
                 value=r.dem.astype(np.float64).ravel(),
                 space=spaces.vector_box(-500.0, 9000.0, self._ncell),
-                uid="gis.elevation_m"),
+                uid="gis.elevation_m",
+            ),
             SensorInformation(
                 value=self._state.astype(np.float64).ravel(),
                 space=spaces.vector_box(0.0, 16.0, self._ncell),
-                uid="gis.cell_state"),
+                uid="gis.cell_state",
+            ),
             SensorInformation(
                 value=spaces.encode_mutations(front_muts, cap=FRONT_CAP),
-                space=spaces.mutation_space(FRONT_CAP), uid="gis.front_cells"),
+                space=spaces.mutation_space(FRONT_CAP),
+                uid="gis.front_cells",
+            ),
             SensorInformation(
                 value=np.array(self._wind, dtype=np.float64),
-                space=spaces.vector_box(0.0, 360.0, 2), uid="gis.wind_field"),
+                space=spaces.vector_box(0.0, 360.0, 2),
+                uid="gis.wind_field",
+            ),
             SensorInformation(
                 value=np.array([front_size], dtype=np.float64),
-                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.front_size"),
+                space=spaces.scalar_box(0.0, 1.0e7),
+                uid="gis.front_size",
+            ),
             SensorInformation(
                 value=np.array([affected], dtype=np.float64),
-                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.affected_cells"),
+                space=spaces.scalar_box(0.0, 1.0e7),
+                uid="gis.affected_cells",
+            ),
         ]
         return out
 
@@ -170,11 +198,13 @@ class GisWorldEnvironment(Environment):
             ActuatorInformation(
                 value=spaces.encode_mutations([], cap=spaces.CAP),
                 space=spaces.mutation_space(spaces.CAP),
-                uid="gis.cell_mutations"),
+                uid="gis.cell_mutations",
+            ),
             ActuatorInformation(
                 value=np.array([-1.0, -1.0], dtype=np.float64),
                 space=spaces.vector_box(-1.0, 360.0, 2),
-                uid="gis.wind_override"),
+                uid="gis.wind_override",
+            ),
         ]
 
     # -- lifecycle ---------------------------------------------------------
@@ -210,11 +240,18 @@ class GisWorldEnvironment(Environment):
         """
         all_muts: List[Tuple[int, int, int, int]] = []
         for act in actuators or []:
-            if act.uid.endswith("gis.cell_mutations") or act.uid == "gis.cell_mutations":
+            if (
+                act.uid.endswith("gis.cell_mutations")
+                or act.uid == "gis.cell_mutations"
+            ):
                 all_muts.extend(
-                    spaces.decode_mutations(np.asarray(act.value).ravel(),
-                                            cap=spaces.CAP))
-            elif act.uid.endswith("gis.wind_override") or act.uid == "gis.wind_override":
+                    spaces.decode_mutations(
+                        np.asarray(act.value).ravel(), cap=spaces.CAP
+                    )
+                )
+            elif (
+                act.uid.endswith("gis.wind_override") or act.uid == "gis.wind_override"
+            ):
                 v = np.asarray(act.value, dtype=np.float64).ravel()
                 spd = float(v[0]) if v.size > 0 else -1.0
                 ddeg = float(v[1]) if v.size > 1 else -1.0
@@ -238,8 +275,7 @@ class GisWorldEnvironment(Environment):
         self.sensors = self._sensor_list()
 
         front_size = int((self._state == BURNING).sum())
-        affected = int(((self._state == BURNING) |
-                        (self._state == BURNED_OUT)).sum())
+        affected = int(((self._state == BURNING) | (self._state == BURNED_OUT)).sum())
 
         world_state: Dict[str, object] = {
             "kind": "gis_world",
@@ -258,13 +294,19 @@ class GisWorldEnvironment(Environment):
         # can rebuild the basemap entirely from the store without a live env.
         if self._step == 1:
             world_state["fuel_class"] = spaces.encode_grid(
-                self._raster.fuel, dtype="int16")
+                self._raster.fuel, dtype="int16"
+            )
             world_state["elevation_m"] = spaces.encode_grid(
-                self._raster.dem, dtype="float32")
+                self._raster.dem, dtype="float32"
+            )
 
-        rewards = [RewardInformation(
-            value=np.array([0.0], dtype=np.float64),
-            space=spaces.scalar_box(-1.0, 1.0), uid="gis_reward")]
+        rewards = [
+            RewardInformation(
+                value=np.array([0.0], dtype=np.float64),
+                space=spaces.scalar_box(-1.0, 1.0),
+                uid="gis_reward",
+            )
+        ]
         done = self._step >= self.max_steps
         return EnvironmentState(
             sensor_information=self.sensors,
