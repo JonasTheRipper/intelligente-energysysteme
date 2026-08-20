@@ -7,6 +7,7 @@ from .cma import (
     RasterStack,
     Theta,
     WildfireCMA,
+    BASE_ROS_BY_FUEL,
 )
 from .damage import DamageMapper, DamageState
 from .gis import SOCAL_BOUNDS, build_socal_raster, synthetic_socal

@@ -17,7 +17,7 @@ test skips gracefully when the 71 MB DEM cache is not present (e.g. in CI).
 import numpy as np
 import pytest
 
-from wildfire_cma import gis
+from wildfire_cma import gis, BASE_ROS_BY_FUEL
 
 
 def test_resample_bilinear_shape_and_range():
@@ -51,11 +51,11 @@ def test_fuel_from_dem_banding():
     assert fuel[0, 0] == 0
     assert fuel[0, -1] == 0
     # the burnable interior carries a coarse grass->timber gradient
-    assert fuel[0, 1] == 1            # valley grass
-    assert fuel[0, 2] == 2            # foothill grass-shrub
-    assert fuel[0, 3] == 3            # chaparral
-    assert fuel[0, 4] == 4            # montane timber-understory
-    assert fuel[0, 5] == 5            # high timber-litter
+    assert fuel[0, 1] == 1  # valley grass
+    assert fuel[0, 2] == 2  # foothill grass-shrub
+    assert fuel[0, 3] == 3  # chaparral
+    assert fuel[0, 4] == 4  # montane timber-understory
+    assert fuel[0, 5] == 5  # high timber-litter
 
 
 def test_fuel_from_dem_deterministic():
@@ -75,16 +75,18 @@ def test_socal_from_srtm_missing_cache_raises(tmp_path):
 def test_socal_from_srtm_real_cache_if_present():
     """If the real DEM mosaic is cached, the loader builds a sane RasterStack."""
     import os
+
     if not os.path.exists(gis._DEM_NPZ):
-        pytest.skip("real SRTM DEM cache not present (regenerate via "
-                    "data/dem/fetch_dem_tiles.py)")
+        pytest.skip(
+            "real SRTM DEM cache not present (regenerate via "
+            "data/dem/fetch_dem_tiles.py)"
+        )
     rs = gis.socal_from_srtm(nrows=30, ncols=40)
     assert rs.fuel.shape == (30, 40)
     assert rs.dem.shape == (30, 40)
     assert rs.delta_m > 0
-    # fuel classes are within the 0..5 coarse scheme
-    assert rs.fuel.min() >= 0
-    assert rs.fuel.max() <= 5
+    # fuel classes are within the BASE_ROS_BY_FUEL set
+    assert set(np.unique(rs.fuel)) <= set(BASE_ROS_BY_FUEL)
     # SoCal spans sea level to high mountains
     assert rs.dem.min() <= 0
     assert rs.dem.max() > 1000
