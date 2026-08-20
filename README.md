@@ -95,7 +95,7 @@ rasterio/GDAL), and stitches the tiles into one north-at-top mosaic:
 # requires an OpenTopography API key (free): https://portal.opentopography.org/myopentopo
 export OPENTOPOGRAPHY_API_KEY=...
 python data/dem/fetch_dem_tiles.py        # -> data/dem/socal_srtm_gl3.npz (~71 MB) + .json
-```
+```4
 
 `wildfire_cma.gis.socal_from_srtm()` loads that cache, bilinearly resamples it
 onto the 600×760 model grid, and derives coarse fuel classes from elevation
@@ -158,7 +158,6 @@ python -c "from palaestrai.experiment import ExperimentRun; \
            print('experiment OK')"
 
 # 5) launch the experiment (one 5-day episode, 120 hourly steps)
-palaestrai start palaestrai_socal/experiment.yml
 ```
 
 What the experiment does (see `palaestrai_socal/experiment.yml`):

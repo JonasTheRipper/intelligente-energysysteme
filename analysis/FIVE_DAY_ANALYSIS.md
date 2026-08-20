@@ -6,18 +6,6 @@ lon/lat = -118.13, 34.19), simulated over **120 hourly
 steps (5 days)** on the full SoCal transmission/sub-transmission model 
 (2,294 buses, 2,595 lines).
 
-**Terrain:** the fire cellular automaton runs on a **real digital elevation 
-model** — SRTM GL3 (90 m) for the full SoCal footprint 
-(`SOCAL_BOUNDS = -121.3, 32.4, -113.7, 37.7`), fetched from 
-[OpenTopography](https://opentopography.org) and resampled to the 600×760 
-model grid (elevation −87…4,318 m). Slope and aspect derived from this DEM 
-drive the Rothermel wind-slope spread factor, so the fire is physically 
-bounded by the real Transverse Ranges, coastline, and high desert rather 
-than idealised synthetic relief. Fuel classes are approximated from the real 
-elevation bands (grass valleys → chaparral foothills → montane timber; 
-ocean and alpine zones non-burnable). See `wildfire_cma/gis.py` 
-(`socal_from_srtm`) and `data/dem/fetch_dem_tiles.py`.
-
 
 The wildfire is realised as a **GUARDIAN Constrained-Mutation operator**: 
 an Overseer-Adversary parameter vector \(\Theta\) (ignition, wind, fuel 
@@ -29,24 +17,24 @@ lines; and a pandapower power flow is solved on the mutated topology each step.
 ## Headline results
 
 - **Baseline served load:** 35,000 MW (~7,000,000 customers).
-- **Final burn footprint:** 176,540 cells affected, of which 176,540 fully burned out.
-- **Peak active fire front:** 4,790 cells.
-- **Grid assets lost (day 5):** 221 buses and 295 lines de-energised.
-- **Peak customers disconnected:** 575,796 (around day 2.0).
-- **Minimum served load (converged):** 32,121 MW.
+- **Final burn footprint:** 166,372 cells affected, of which 166,372 fully burned out.
+- **Peak active fire front:** 4,339 cells.
+- **Grid assets lost (day 5):** 213 buses and 327 lines de-energised.
+- **Peak customers disconnected:** 734,417 (around day 2.5).
+- **Minimum served load (converged):** 31,328 MW.
 - **Minimum bus voltage at day 5:** 0.984 pu.
-- **Cumulative SAIDI at day 5:** 533 customer-minutes per customer.
+- **Cumulative SAIDI at day 5:** 690 customer-minutes per customer.
 
 
 ## Daily progression
 
 | Day | Affected cells | Burned cells | Active front | Failed buses | Failed lines | Served MW | Customers disconnected | SAIDI (min) | Min Vm (pu) |
 |----:|---------------:|-------------:|-------------:|-------------:|-------------:|----------:|-----------------------:|------------:|------------:|
-| 1 | 51,700 | 49,859 | 1,841 | 186 | 263 | 32,141 | 571,782 | 59 | 0.984 |
-| 2 | 173,040 | 172,769 | 271 | 219 | 295 | 32,121 | 575,796 | 177 | 0.984 |
-| 3 | 176,540 | 176,540 | 0 | 221 | 295 | 32,121 | 575,796 | 296 | 0.984 |
-| 4 | 176,540 | 176,540 | 0 | 221 | 295 | 32,121 | 575,796 | 414 | 0.984 |
-| 5 | 176,540 | 176,540 | 0 | 221 | 295 | 32,121 | 575,796 | 533 | 0.984 |
+| 1 | 52,913 | 51,564 | 1,349 | 198 | 315 | 31,334 | 733,115 | 86 | 0.984 |
+| 2 | 159,365 | 158,587 | 778 | 212 | 325 | 31,334 | 733,115 | 236 | 0.984 |
+| 3 | 166,372 | 166,372 | 0 | 213 | 327 | 31,328 | 734,417 | 387 | 0.984 |
+| 4 | 166,372 | 166,372 | 0 | 213 | 327 | 31,328 | 734,417 | 538 | 0.984 |
+| 5 | 166,372 | 166,372 | 0 | 213 | 327 | 31,328 | 734,417 | 690 | 0.984 |
 
 ## Meteorological forcing
 

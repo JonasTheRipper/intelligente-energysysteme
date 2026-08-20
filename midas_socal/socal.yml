@@ -30,5 +30,5 @@ socal:
       # voltage-rescaled (f=0.8) net: clears midas_powergrid's 440 kV vn_kv
       # sensor cap while keeping the per-unit power flow identical.
       # See midas_socal/rescale_grid_voltage.py.
-      gridfile: /home/user/workspace/socal-wildfires/midas_socal/socal_grid_midas_rescaled.json
+      gridfile: midas_socal/socal_grid_midas_rescaled.json
       plotting: false

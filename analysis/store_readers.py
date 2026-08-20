@@ -270,9 +270,22 @@ def read_run(
             + (f" phase_uid={phase_uid!r}" if phase_uid is not None else "")
             + (f" phase_index={phase_index!r}" if phase_index is not None else "")
         )
-
-    # --- static geometry from the first gis_world row ---------------------
     first = _sensors_by_suffix(gis_rows[0][1])
+    print("AVAILABLE KEYS:")
+    for key, value in first.items():
+        try:
+            print(f"  {key}: shape={np.asarray(value).shape}")
+        except Exception:
+            print(f"  {key}: {type(value)}")
+
+    nr, nc = (int(x) for x in first["gis.grid_shape"].ravel()[:2])
+    bounds = tuple(float(x) for x in first["gis.bounds"].ravel()[:4])
+    delta_m = float(first["gis.cell_size_m"].ravel()[0])
+    fuel = first["gis.fuel_class"].reshape(nr, nc)
+    dem = first["gis.elevation_m"].reshape(nr, nc)
+
+    minlon, minlat, maxlon, maxlat = bounds
+    extent = [minlon, maxlon, minlat, maxlat]
     nr, nc = (int(x) for x in first["gis.grid_shape"].ravel()[:2])
     bounds = tuple(float(x) for x in first["gis.bounds"].ravel()[:4])
     delta_m = float(first["gis.cell_size_m"].ravel()[0])

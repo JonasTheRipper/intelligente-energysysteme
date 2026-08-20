@@ -94,6 +94,8 @@ class IncidentCommand:
             return float(F.mean())
         return float(F[burning].mean())
 
+    # Tanken muss belohnt werden, 0 bleibend muss bestraft werden 
+
     @staticmethod
     def _merge(groups: Sequence[Sequence[Mutation]]) -> List[Mutation]:
         """Merge tactic outputs, deduping cells by highest state priority.
@@ -137,6 +139,7 @@ class IncidentCommand:
 
         for res in self.resources:
             budget = res.capacity(wind_speed, step_min, cell_m, slope_deg)
+            #Dead
             if budget <= 0:
                 continue
 

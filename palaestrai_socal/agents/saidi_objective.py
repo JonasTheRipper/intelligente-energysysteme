@@ -175,9 +175,11 @@ class SaidiObjective(Objective):
         if params:
             settings.update(params)
         super().__init__(params=settings)
+
         self._scale = float(settings["scale"])
         self._base_served_mw = float(settings["base_served_mw"])
         self._dt_min = float(settings["dt_min"])
+        
         self._total_customers = (
             max(1.0, self._base_served_mw) * CUSTOMERS_PER_MW
         )

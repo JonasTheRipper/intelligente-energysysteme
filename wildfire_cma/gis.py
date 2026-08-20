@@ -173,7 +173,7 @@ def _fuel_from_dem(dem: np.ndarray, seed: int = 7) -> np.ndarray:
     # light scatter of urban / agricultural non-burnable cells in low valleys
     low = dem < 250
     urban = (rng.random(dem.shape) < 0.03) & low
-    fuel[urban] = 0
+    fuel[urban] = 9
     return fuel
 
 
@@ -225,7 +225,7 @@ def from_rasters(
     from rasterio.warp import Resampling, calculate_default_transform, reproject
     from rasterio.windows import from_bounds as window_from_bounds
 
-    bounds = bounds or SOCAL_BOUNDS
+    bounds = bounds or SOCAL_BOUNDS # Where the tiles description come from
 
     def _read(path):
         with rasterio.open(path) as src:
@@ -246,9 +246,12 @@ def from_rasters(
     if nlcd_path:
         nlcd, _, _, _ = _read(nlcd_path)
         if nlcd.shape == fuel.shape:
-            # NLCD: 11=water, 21-24=developed, 31=barren -> non-burnable
-            nb = np.isin(nlcd, [11, 12, 21, 22, 23, 24, 31])
-            fuel[nb] = 0
+            # NLCD: 11=water, 21-24=developed - houses should be burnable, 31=barren -> non-burnable           
+            nb1 = np.isin(nlcd, [11, 12, 31])
+            nb2 = np.isin(nlcd, [21, 22, 23, 24])
+            fuel[nb1] = 0
+            fuel[nb2] = 9
+
 
     if target_shape and target_shape != fuel.shape:
         from scipy.ndimage import zoom

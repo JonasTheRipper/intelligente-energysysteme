@@ -102,7 +102,7 @@ schedule:
         mode: train          # no learning happens, but the agent still acts
         worker: 1
         episodes: 1          # one 5-day episode
-        evaluate_every: 0
+        evaluate_every: 1
         store_raw_actuators: true
 
 run_config:

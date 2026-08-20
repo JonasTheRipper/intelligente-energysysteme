@@ -69,11 +69,12 @@ BASE_ROS_BY_FUEL: Dict[int, float] = {
     4: 1.2,    # timber-understory TU
     5: 0.8,    # timber-litter TL
     6: 1.5,    # slash-blowdown SB
+    9: 1.0,    # developed houses
 }
 
 # fuel moisture of extinction by class (fraction); above this no spread
 FUEL_MX_EXTINCTION: Dict[int, float] = {
-    0: 0.0, 1: 0.15, 2: 0.20, 3: 0.30, 4: 0.30, 5: 0.30, 6: 0.25,
+    0: 0.0, 1: 0.15, 2: 0.20, 3: 0.30, 4: 0.30, 5: 0.30, 6: 0.25, 9: 0.20,
 }
 
 
