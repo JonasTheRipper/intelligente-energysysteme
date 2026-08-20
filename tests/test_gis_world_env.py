@@ -157,3 +157,92 @@ def test_no_pandapower_import():
     env = _mk_env()
     env.start_environment()
     env.update([_mut_act([(1, 1, spaces.BURNING, spaces.LAYER_FIRE)])])
+
+
+# ---------------------------------------------------------------------------
+# House telemetry (gis.houses_* sensors)
+# ---------------------------------------------------------------------------
+# The environment owns the fuel raster and the cell states, so it -- not an
+# objective -- is the right place to count destroyed structures. These pin the
+# contract BurnedHousesObjective consumes.
+
+def _house_env(nr=20, nc=25, max_steps=5):
+    """An env whose raster is guaranteed to contain house cells."""
+    from wildfire_cma.cma import HOUSE_FUEL_CLASS
+    env = _mk_env(nr=nr, nc=nc, max_steps=max_steps)
+    env.start_environment()
+    # pin a deterministic settlement rather than relying on the scatter
+    env._raster.fuel[:] = 3
+    env._raster.fuel[5:8, 5:8] = HOUSE_FUEL_CLASS      # 9 house cells
+    env.total_houses = int((env._raster.fuel == HOUSE_FUEL_CLASS).sum())
+    return env
+
+
+def _sensor(env, uid):
+    for s in env.sensors:
+        if s.uid == uid:
+            return float(np.asarray(s.value).ravel()[0])
+    raise AssertionError(f"sensor {uid} not published")
+
+
+def test_house_sensors_are_published():
+    env = _mk_env()
+    env.start_environment()
+    for uid in ("gis.houses_total", "gis.houses_burned_this_step",
+                "gis.houses_burned_total"):
+        _sensor(env, uid)   # raises if missing
+
+
+def test_houses_total_matches_the_raster():
+    from wildfire_cma.cma import HOUSE_FUEL_CLASS
+    env = _mk_env()
+    env.start_environment()
+    assert _sensor(env, "gis.houses_total") == float(
+        (env._raster.fuel == HOUSE_FUEL_CLASS).sum()
+    )
+
+
+def test_burned_houses_counts_only_house_cells_becoming_terminal():
+    from wildfire_cma.cma import BURNED_OUT
+    env = _house_env()
+    # burn out one house cell and one non-house cell in the same step
+    env.update([_mut_act([(5, 5, BURNED_OUT, spaces.LAYER_FIRE),
+                          (0, 0, BURNED_OUT, spaces.LAYER_FIRE)])])
+    assert _sensor(env, "gis.houses_burned_this_step") == 1.0
+    assert _sensor(env, "gis.houses_burned_total") == 1.0
+
+
+def test_burned_houses_does_not_double_count_a_terminal_cell():
+    """The delta counts the *transition*, so a standing footprint costs once."""
+    from wildfire_cma.cma import BURNED_OUT
+    env = _house_env()
+    env.update([_mut_act([(5, 5, BURNED_OUT, spaces.LAYER_FIRE)])])
+    env.update([_mut_act([(5, 5, BURNED_OUT, spaces.LAYER_FIRE)])])
+    assert _sensor(env, "gis.houses_burned_this_step") == 0.0
+    assert _sensor(env, "gis.houses_burned_total") == 1.0
+
+
+def test_burned_houses_total_is_the_sum_of_the_deltas():
+    from wildfire_cma.cma import BURNED_OUT
+    env = _house_env()
+    seen = 0.0
+    for cell in ((5, 5), (5, 6), (6, 5)):
+        env.update([_mut_act([(cell[0], cell[1], BURNED_OUT, spaces.LAYER_FIRE)])])
+        seen += _sensor(env, "gis.houses_burned_this_step")
+    assert seen == 3.0
+    assert _sensor(env, "gis.houses_burned_total") == 3.0
+
+
+def test_a_burning_house_is_not_yet_counted_as_destroyed():
+    """Documents the tail-end lag: only BURNED_OUT counts as destroyed."""
+    from wildfire_cma.cma import BURNING
+    env = _house_env()
+    env.update([_mut_act([(5, 5, BURNING, spaces.LAYER_FIRE)])])
+    assert _sensor(env, "gis.houses_burned_this_step") == 0.0
+
+
+def test_static_world_model_records_raster_provenance():
+    env = _mk_env()
+    bl = env.start_environment()
+    assert bl.static_world_model["raster_source"] == "synthetic"
+    assert bl.static_world_model["house_cells"] == _sensor(env, "gis.houses_total")

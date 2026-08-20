@@ -16,6 +16,8 @@ import math
 import numpy as np
 from scipy import ndimage
 
+from .cma import HOUSE_FUEL_CLASS
+
 
 def contain_burnable_footprint(
     fuel: np.ndarray,
@@ -60,7 +62,17 @@ def contain_burnable_footprint(
         allowed = ndimage.binary_dilation(real_mask, iterations=int(margin_cells))
     else:
         allowed = real_mask
-    fuel[~allowed] = 0
+    # Zero the fuel outside the footprint, but PRESERVE built-up cells: fuel
+    # class doubles as the settlement layer, so blanket-zeroing here would erase
+    # every house that did not burn -- i.e. exactly the denominator a
+    # burned-houses metric needs ("of all houses, how many were lost?").
+    # Houses outside the footprint stay class 9 and remain nominally burnable;
+    # containment still holds because the scatter is sparse (~1% of cells), so
+    # class-9 cells are effectively never 8-connected into a chain the fire
+    # could travel along. Verified with analysis/verify_calibration.py after
+    # this exemption: Eaton Dice=0.907/+0.3%%, Palisades Dice=0.957/+4.6%%,
+    # both PASS -- i.e. the calibrated extent is held exactly as before.
+    fuel[~allowed & (fuel != HOUSE_FUEL_CLASS)] = 0
     return fuel
 
 

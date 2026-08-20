@@ -3,6 +3,7 @@
 from .cma import (
     BURNED_OUT,
     BURNING,
+    HOUSE_FUEL_CLASS,
     UNBURNED,
     RasterStack,
     Theta,
@@ -19,6 +20,8 @@ __all__ = [
     "UNBURNED",
     "BURNING",
     "BURNED_OUT",
+    "HOUSE_FUEL_CLASS",
+    "BASE_ROS_BY_FUEL",
     "DamageMapper",
     "DamageState",
     "build_socal_raster",

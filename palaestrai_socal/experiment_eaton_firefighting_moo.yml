@@ -1,51 +1,63 @@
 # =============================================================================
-# EATON FIRE -- v0.7 "FULL-BLOWN FIREFIGHTING" experiment (SIX phases: 4 scripted + 2 DRL).
-# Updated for v0.5 spatial wind integration: calibrated grid 130x182, spatial
-# perimeter-informed wind field (base_speed=14, boundary_gain=0.3).
+# EATON FIRE -- MULTI-OBJECTIVE SCORING VALIDATION (four scripted phases).
 #
-# Built on experiment_eaton_local_ab.yml: the SAME fine ~50 m Eaton-Canyon
-# scenario, IDENTICAL seeding (seed: 47), bounds, raster (222x184), wind
-# (8 m/s -> fleet NOT grounded), max_steps (60), ignition and turn order
-# (wildfire -> firefighter -> damage_mapper -> grid_probe). The ONLY thing that
-# changes between phases is the firefighter resource mix / doctrine:
+# WHAT THIS FILE IS FOR
+# ---------------------
+# A copy of experiment_eaton_firefighting.yml with the firefighter's objective
+# swapped from DummyObjective to MooObjective. It exists to answer one
+# question: **does the multi-objective reward score known-different policies in
+# a sensible order?**
 #
-#   phase 0  uid: phase_0_no_ff       no responders (pure v0.2 baseline)
-#   phase 1  uid: phase_1_air         3 aero tankers, indirect line (== v0.3)
-#   phase 2  uid: phase_2_air_ground  3 tankers + 4 hand crews + 2 dozers
-#   phase 3  uid: phase_3_full_triage full mix + 3 engines, triage + point
-#                                     protection of grid-critical ground
+# It is a scoring experiment, not a learning one. The scripted FirefighterMuscle
+# ignores brain feedback entirely (`update()` is `pass`) and CappedDummyBrain
+# never trains, so changing the objective is BEHAVIOUR-NEUTRAL: all four phases
+# produce byte-identical trajectories to the scripted A/B run, and every
+# difference in the recorded objective is attributable to the scoring alone.
+# That makes this a clean bench for a reward function -- four policies with
+# known, different outcomes (SAIDI 1.97 -> 0.27; 137 -> 365 -> 654 acres saved),
+# identical machinery, the objective as a pure observer.
 #
-# v0.4 contracts honoured by the phasing:
-#   * phase 0 firefighter has every count 0 -> zero budget -> ZERO mutations ->
-#     the fire CA is bit-for-bit the v0.2 baseline (no-op identity).
-#   * phase 1 is tankers-only + indirect doctrine -> reproduces the v0.3
-#     retardant line EXACTLY (v0.3 identity).
-#   * phases 2-3 add ground resources laying CONTAINED line (a distinct
-#     cell-state, arbitrated above SUPPRESSED, below BURNED_OUT) and -- in
-#     phase 3 -- engines doing point protection of grid-asset cells.
+#   phase 0  phase_0_no_ff        no responders (pure v0.2 baseline)
+#   phase 1  phase_1_air          3 aero tankers, indirect line (== v0.3)
+#   phase 2  phase_2_air_ground   3 tankers + 4 hand crews + 2 dozers
+#   phase 3  phase_3_full_triage  full mix + 3 engines, triage + point
+#                                 protection of grid-critical ground
 #
-# The firefighter muscle is scripted (palaestrAI dummy brain + dummy objective);
-# only its FirefighterMuscle is custom. It delegates to the deterministic
-# IncidentCommand fleet-mix allocator (palaestrai_socal.agents.firefighting).
-# Telemetry is recorded on the muscle instance and NOT returned on the
-# brain/data channel (the v0.4 fix for the DummyBrain dict+int warning).
+# TWO DELIBERATE DIFFERENCES FROM experiment_eaton_firefighting.yml
+# -----------------------------------------------------------------
+# 1. **The DRL phases are removed.** MooObjective must NOT drive the SAC/CQL
+#    firefighter yet: data/offline/*.npz holds pure-SAIDI rewards, so
+#    bootstrapping would train the critic on two different reward functions.
+#    (Separately, `_ensure_value_raster` still weights only by bus load, so a
+#    learning agent has almost no lever on the house axis -- see the design
+#    notes.) Re-harvest the offline buffer with matching rewards before
+#    pointing a learner at this objective.
 #
-# The firefighter subscribes to gis.elevation_m in the ground phases so the
-# muscle can derive a mean slope for crew/dozer productivity derating; if it is
-# absent the muscle degrades to flat terrain (no penalty). protect_assets +
-# grid_json (phase 3) let the muscle build a per-cell grid-asset value raster
-# from the DamageMapper bus->cell registration for triage / point protection;
-# any failure (no pandapower / grid JSON) degrades to triage-off.
+# 2. **The scripted firefighter now subscribes to the 14 grid-load sensors.**
+#    It did not before, because its tactics do not need them -- but
+#    SaidiObjective recovers served MW by summing `*-load-*.p_mw` out of the
+#    agent's own Memory, so without them the SAIDI axis returns 0.0 on every
+#    step and MooObjective silently degrades to a houses-only objective. The
+#    muscle looks its sensors up by suffix and ignores the rest, so the extra
+#    subscription does not change behaviour.
 #
-# The grid env keeps the SAME extra sensors as the A/B file so the comparison
-# grid-metrics plots are meaningful:  *-bus-*.vm_pu (vmin/vmean p.u.),
-# *-line-*.p_from_mw (real intertie flow), -load-*.p_mw (served MW), health.
+# `base_served_mw: 241.5` is the combined nameplate load of exactly those 14
+# sensors. The SaidiObjective default of 1.0 suits a normalised testbed grid;
+# against a 241.5 MW subscription it makes `clip(base - served, 0, base)`
+# identically zero -- the same silent-zero failure as above, by a different
+# route. If a run shows the SAIDI axis contributing nothing, check this number
+# first (MooObjective.running_shares() reports the per-axis split).
 #
-# Run (after user review; NOT auto-run by the coding session):
-#   env PYTHONPATH=$PWD palaestrai -c runtime_pg_eaton.conf.yaml start \
-#     palaestrai_socal/experiment_eaton_firefighting.yml
+# Run (heavy; ~30-45 min, ~5 GB RAM peak, phases sequential):
+#   env PYTHONPATH=$PWD palaestrai -c runtime.conf.yaml start \
+#     palaestrai_socal/experiment_eaton_firefighting_moo.yml
+#
+# Evaluate: analysis.store_readers.read_agent_objectives(store, "firefighter",
+# phase_uid=...) gives the per-step objective trace per phase; compare the
+# cumulative totals across the four phases and check the ranking matches
+# domain judgement.
 # =============================================================================
-uid: socal_v07_eaton_firefighting
+uid: socal_v08_eaton_firefighting_moo
 seed: 47
 version: 3.5.9
 
@@ -152,14 +164,36 @@ schedule:
               raster_ncols: 182
               bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
+            name: palaestrai_socal.agents.moo_objective:MooObjective
+            params:
+              alpha: 0.5
+              beta: 0.5
+              saidi_params:
+                scale: 60.0
+                base_served_mw: 241.5
+                dt_min: 60.0
+              houses_params:
+                scale: 0.02
           sensors:
             - gis_world.gis.cell_state
             - gis_world.gis.fuel_class
             - gis_world.gis.houses_total
             - gis_world.gis.houses_burned_this_step
             - gis_world.gis.houses_burned_total
+            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
+            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
+            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
+            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
+            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
+            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
+            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
+            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
+            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
+            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
+            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
+            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
+            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
+            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
           actuators:
             - gis_world.gis.cell_mutations
 
@@ -326,14 +360,36 @@ schedule:
               raster_ncols: 182
               bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
+            name: palaestrai_socal.agents.moo_objective:MooObjective
+            params:
+              alpha: 0.5
+              beta: 0.5
+              saidi_params:
+                scale: 60.0
+                base_served_mw: 241.5
+                dt_min: 60.0
+              houses_params:
+                scale: 0.02
           sensors:
             - gis_world.gis.cell_state
             - gis_world.gis.fuel_class
             - gis_world.gis.houses_total
             - gis_world.gis.houses_burned_this_step
             - gis_world.gis.houses_burned_total
+            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
+            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
+            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
+            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
+            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
+            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
+            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
+            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
+            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
+            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
+            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
+            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
+            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
+            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
           actuators:
             - gis_world.gis.cell_mutations
 
@@ -505,8 +561,16 @@ schedule:
               raster_ncols: 182
               bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
+            name: palaestrai_socal.agents.moo_objective:MooObjective
+            params:
+              alpha: 0.5
+              beta: 0.5
+              saidi_params:
+                scale: 60.0
+                base_served_mw: 241.5
+                dt_min: 60.0
+              houses_params:
+                scale: 0.02
           sensors:
             - gis_world.gis.cell_state
             - gis_world.gis.fuel_class
@@ -514,6 +578,20 @@ schedule:
             - gis_world.gis.houses_total
             - gis_world.gis.houses_burned_this_step
             - gis_world.gis.houses_burned_total
+            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
+            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
+            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
+            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
+            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
+            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
+            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
+            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
+            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
+            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
+            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
+            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
+            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
+            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
           actuators:
             - gis_world.gis.cell_mutations
 
@@ -687,225 +765,20 @@ schedule:
               raster_ncols: 182
               bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
           objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
+            name: palaestrai_socal.agents.moo_objective:MooObjective
+            params:
+              alpha: 0.5
+              beta: 0.5
+              saidi_params:
+                scale: 60.0
+                base_served_mw: 241.5
+                dt_min: 60.0
+              houses_params:
+                scale: 0.02
           sensors:
             - gis_world.gis.cell_state
             - gis_world.gis.fuel_class
             - gis_world.gis.elevation_m
-            - gis_world.gis.houses_total
-            - gis_world.gis.houses_burned_this_step
-            - gis_world.gis.houses_burned_total
-          actuators:
-            - gis_world.gis.cell_mutations
-
-        - name: damage_mapper
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
-            params:
-              grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - gis_world.gis.cell_state
-          actuators:
-            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
-            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
-            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
-            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
-            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
-            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
-            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
-            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
-            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
-            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
-            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
-            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
-            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
-            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
-
-        - name: grid_probe
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai.agent.dummy_muscle:DummyMuscle
-            params: {}
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - socal_grid.Powergrid-0.0-bus-0.vm_pu
-            - socal_grid.Powergrid-0.Grid-0.health
-          actuators:
-            - socal_grid.Powergrid-0.0-load-0-0.p_mw
-
-      simulation:
-        name: palaestrai.simulation.taking_turns_simulation_controller:TakingTurnsSimulationController
-        conditions:
-          - name: palaestrai.simulation.vanilla_simcontroller_termination_condition:VanillaSimControllerTerminationCondition
-            params: {}
-
-      phase_config:
-        mode: train
-        worker: 1
-        episodes: 1
-        evaluate_every: 1000000
-
-  # ----------------------------------------------------------------------- 4
-  # Phase 4 -- DRL TRAIN. A LEARNING firefighter replaces the scripted one: the
-  # hARL SAC/CQL brain (FirefighterSacBrain) is bootstrapped from the offline
-  # teacher transitions harvested from THIS store's phases 1-3
-  # (data/offline/eaton_teacher_all.npz), then fine-tuned online. The learning
-  # muscle (LearningFirefighterMuscle) presents the 17-dim contract observation
-  # and maps the policy's Discrete(4) doctrine onto the SAME IncidentCommand
-  # machinery the scripted teacher used, so physical suppression stays
-  # consistent. Fleet == phase 3 (full mix + engines) so every doctrine (incl.
-  # triage) is executable. Objective = SaidiObjective (reward = -dSAIDI/60).
-  - phase_4_drl_train:
-      environments:
-        - environment:
-            name: palaestrai_socal.gis_world_env:GisWorldEnvironment
-            uid: gis_world
-            params:
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-              use_real_dem: true
-              env_step_min: 60.0
-              max_steps: 60
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-          state_transformer:
-            name: palaestrai_socal.store_filters:StoreDumpTrimmer
-            params:
-              keep_suffixes:
-                - gis.grid_shape
-                - gis.bounds
-                - gis.cell_size_m
-                - gis.cell_state
-                - gis.wind_field
-                - gis.houses_total
-                - gis.houses_burned_this_step
-                - gis.houses_burned_total
-              static_suffixes:
-                - gis.fuel_class
-                - gis.elevation_m
-        - environment:
-            name: palaestrai_socal.midas_grid_env:SocalMidasGridEnvironment
-            uid: socal_grid
-            params:
-              step_size: 3600
-              max_steps: 60
-              end: 216000
-              start_date: "2025-01-08 02:18:00+0000"
-              silent: true
-          state_transformer:
-            name: palaestrai_socal.store_filters:StoreDumpTrimmer
-            params:
-              keep_substrings:
-                - "-load-"
-              keep_suffixes:
-                - Grid-0.health
-                - .vm_pu
-                - .p_from_mw
-
-      agents:
-        - name: wildfire
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
-            params:
-              ignition_points: [[-118.0935761, 34.1860422]]
-              ignition_step: 1
-              env_step_min: 60.0
-              dt_cma_min: 5.0
-              t_burn_steps: 6
-              kappa: 1.5
-              dead_fuel_moisture: 0.13
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-              perimeter_path: data/perimeters/eaton_perimeter.geojson
-              base_speed: 14
-              boundary_gain: 0.3
-              fuel_reclass: false
-              containment_margin: 2
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - gis_world.gis.fuel_class
-            - gis_world.gis.elevation_m
-            - gis_world.gis.cell_state
-          actuators:
-            - gis_world.gis.cell_mutations
-
-        # Phase 4 firefighter: LEARNING SAC/CQL agent (full fleet mix). The
-        # brain sizes its nets to the Box(17)/Discrete(4) contract and seeds its
-        # replay buffer from the offline teacher npz; the muscle presents the
-        # 17-dim obs and runs the chosen doctrine through IncidentCommand. It
-        # subscribes to the grid-load sensors so it can derive served MW / SAIDI
-        # for obs features 10-12 (and the SaidiObjective reads the same).
-        - name: firefighter
-          brain:
-            name: palaestrai_socal.agents.firefighter_drl_brain:FirefighterSacBrain
-            params:
-              offline_npz: data/offline/eaton_teacher_all.npz
-              replay_size: 50000
-              fc_dims: [256, 256]
-              lr: 0.0003
-              gamma: 0.99
-              polyak: 0.995
-              batch_size: 64
-              update_after: 200
-              update_every: 30
-              cql_alpha: 1.0
-          muscle:
-            name: palaestrai_socal.agents.firefighter_drl_agent:LearningFirefighterMuscle
-            params:
-              n_planes: 3
-              n_helos: 2
-              n_crews: 4
-              n_dozers: 2
-              n_engines: 3
-              start_steps: 200
-              protect_assets: true
-              grid_json: midas_socal/socal_grid_midas_rescaled.json
-              base_served_mw: 1.0
-              saidi_scale: 60.0
-              env_step_min: 60.0
-              max_steps: 60
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-          objective:
-            name: palaestrai_socal.agents.saidi_objective:SaidiObjective
-            params:
-              scale: 60.0
-              base_served_mw: 1.0
-              dt_min: 60.0
-          sensors:
-            - gis_world.gis.grid_shape
-            - gis_world.gis.cell_size_m
-            - gis_world.gis.bounds
-            - gis_world.gis.cell_state
-            - gis_world.gis.fuel_class
-            - gis_world.gis.elevation_m
-            - gis_world.gis.wind_field
             - gis_world.gis.houses_total
             - gis_world.gis.houses_burned_this_step
             - gis_world.gis.houses_burned_total
@@ -983,229 +856,19 @@ schedule:
       phase_config:
         mode: train
         worker: 1
-        episodes: 40
-        evaluate_every: 10
-
-  # ----------------------------------------------------------------------- 5
-  # Phase 5 -- DRL TEST. The trained firefighter actor (transferred from the
-  # phase-4 brain dump) runs greedily (start_steps 0 -> no exploration; the
-  # muscle acts deterministically in test mode) for a single evaluation
-  # episode. Identical scenario / fleet to phase 4 so the SAIDI outcome is
-  # directly comparable to the scripted phase-3 teacher.
-  - phase_5_drl_test:
-      environments:
-        - environment:
-            name: palaestrai_socal.gis_world_env:GisWorldEnvironment
-            uid: gis_world
-            params:
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-              use_real_dem: true
-              env_step_min: 60.0
-              max_steps: 60
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-          state_transformer:
-            name: palaestrai_socal.store_filters:StoreDumpTrimmer
-            params:
-              keep_suffixes:
-                - gis.grid_shape
-                - gis.bounds
-                - gis.cell_size_m
-                - gis.cell_state
-                - gis.wind_field
-                - gis.houses_total
-                - gis.houses_burned_this_step
-                - gis.houses_burned_total
-              static_suffixes:
-                - gis.fuel_class
-                - gis.elevation_m
-        - environment:
-            name: palaestrai_socal.midas_grid_env:SocalMidasGridEnvironment
-            uid: socal_grid
-            params:
-              step_size: 3600
-              max_steps: 60
-              end: 216000
-              start_date: "2025-01-08 02:18:00+0000"
-              silent: true
-          state_transformer:
-            name: palaestrai_socal.store_filters:StoreDumpTrimmer
-            params:
-              keep_substrings:
-                - "-load-"
-              keep_suffixes:
-                - Grid-0.health
-                - .vm_pu
-                - .p_from_mw
-
-      agents:
-        - name: wildfire
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai_socal.agents.wildfire_agent:WildfireCmaMuscle
-            params:
-              ignition_points: [[-118.0935761, 34.1860422]]
-              ignition_step: 1
-              env_step_min: 60.0
-              dt_cma_min: 5.0
-              t_burn_steps: 6
-              kappa: 1.5
-              dead_fuel_moisture: 0.13
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-              perimeter_path: data/perimeters/eaton_perimeter.geojson
-              base_speed: 14
-              boundary_gain: 0.3
-              fuel_reclass: false
-              containment_margin: 2
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - gis_world.gis.fuel_class
-            - gis_world.gis.elevation_m
-            - gis_world.gis.cell_state
-          actuators:
-            - gis_world.gis.cell_mutations
-
-        # Phase 5 firefighter: SAME learning agent, but tested. start_steps 0 =>
-        # no warm-up exploration; the muscle queries the transferred actor
-        # deterministically (test mode). No offline reload needed for eval.
-        - name: firefighter
-          brain:
-            name: palaestrai_socal.agents.firefighter_drl_brain:FirefighterSacBrain
-            params:
-              offline_npz: data/offline/eaton_teacher_all.npz
-              replay_size: 50000
-              fc_dims: [256, 256]
-              lr: 0.0003
-              gamma: 0.99
-              polyak: 0.995
-              batch_size: 64
-              update_after: 200
-              update_every: 30
-              cql_alpha: 1.0
-          muscle:
-            name: palaestrai_socal.agents.firefighter_drl_agent:LearningFirefighterMuscle
-            params:
-              n_planes: 3
-              n_helos: 2
-              n_crews: 4
-              n_dozers: 2
-              n_engines: 3
-              start_steps: 0
-              protect_assets: true
-              grid_json: midas_socal/socal_grid_midas_rescaled.json
-              base_served_mw: 1.0
-              saidi_scale: 60.0
-              env_step_min: 60.0
-              max_steps: 60
-              wind_speed: 8.0
-              wind_dir_deg: 45.0
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-          objective:
-            name: palaestrai_socal.agents.saidi_objective:SaidiObjective
-            params:
-              scale: 60.0
-              base_served_mw: 1.0
-              dt_min: 60.0
-          sensors:
-            - gis_world.gis.grid_shape
-            - gis_world.gis.cell_size_m
-            - gis_world.gis.bounds
-            - gis_world.gis.cell_state
-            - gis_world.gis.fuel_class
-            - gis_world.gis.elevation_m
-            - gis_world.gis.wind_field
-            - gis_world.gis.houses_total
-            - gis_world.gis.houses_burned_this_step
-            - gis_world.gis.houses_burned_total
-            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
-            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
-            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
-            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
-            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
-            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
-            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
-            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
-            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
-            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
-            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
-            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
-            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
-            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
-          actuators:
-            - gis_world.gis.cell_mutations
-
-        - name: damage_mapper
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai_socal.agents.damage_agent:DamageMapperMuscle
-            params:
-              grid_json: midas_socal/socal_grid_midas_rescaled.json
-              raster_nrows: 130
-              raster_ncols: 182
-              bounds: [-118.1771, 34.1469, -117.9981, 34.2528]
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - gis_world.gis.cell_state
-          actuators:
-            - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
-            - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
-            - socal_grid.Powergrid-0.0-load-1631-1891.p_mw
-            - socal_grid.Powergrid-0.0-load-1647-1909.p_mw
-            - socal_grid.Powergrid-0.0-load-1644-1906.p_mw
-            - socal_grid.Powergrid-0.0-load-1663-1925.p_mw
-            - socal_grid.Powergrid-0.0-load-1630-1890.p_mw
-            - socal_grid.Powergrid-0.0-load-1628-1888.p_mw
-            - socal_grid.Powergrid-0.0-load-1649-1911.p_mw
-            - socal_grid.Powergrid-0.0-load-1697-1959.p_mw
-            - socal_grid.Powergrid-0.0-load-1648-1910.p_mw
-            - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
-            - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
-            - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
-
-        - name: grid_probe
-          brain:
-            name: palaestrai_socal.agents.capped_dummy_brain:CappedDummyBrain
-            params: {memory_size_limit: 2}
-          muscle:
-            name: palaestrai.agent.dummy_muscle:DummyMuscle
-            params: {}
-          objective:
-            name: palaestrai.agent.dummy_objective:DummyObjective
-            params: {}
-          sensors:
-            - socal_grid.Powergrid-0.0-bus-0.vm_pu
-            - socal_grid.Powergrid-0.Grid-0.health
-          actuators:
-            - socal_grid.Powergrid-0.0-load-0-0.p_mw
-
-      simulation:
-        name: palaestrai.simulation.taking_turns_simulation_controller:TakingTurnsSimulationController
-        conditions:
-          - name: palaestrai.simulation.vanilla_simcontroller_termination_condition:VanillaSimControllerTerminationCondition
-            params: {}
-
-      phase_config:
-        mode: test
-        worker: 1
         episodes: 1
         evaluate_every: 1000000
 
+  # ----------------------------------------------------------------------- 4
+  # Phase 4 -- DRL TRAIN. A LEARNING firefighter replaces the scripted one: the
+  # hARL SAC/CQL brain (FirefighterSacBrain) is bootstrapped from the offline
+  # teacher transitions harvested from THIS store's phases 1-3
+  # (data/offline/eaton_teacher_all.npz), then fine-tuned online. The learning
+  # muscle (LearningFirefighterMuscle) presents the 17-dim contract observation
+  # and maps the policy's Discrete(4) doctrine onto the SAME IncidentCommand
+  # machinery the scripted teacher used, so physical suppression stays
+  # consistent. Fleet == phase 3 (full mix + engines) so every doctrine (incl.
+  # triage) is executable. Objective = SaidiObjective (reward = -dSAIDI/60).
 run_config:
   condition:
     name: palaestrai.experiment.vanilla_rungovernor_termination_condition:VanillaRunGovernorTerminationCondition

@@ -57,6 +57,13 @@ SUPPRESSED = 3
 # does not age out within the episode. Mirrors palaestrai_socal.spaces.CONTAINED.
 CONTAINED = 5
 
+# Built-up ("houses") fuel class. Burnable on purpose: the January-2025 fires
+# destroyed ~9,400 (Eaton) and ~6,800 (Palisades) structures, so modelling
+# settlement as non-burnable class 0 is exactly wrong. Named here, beside the
+# ROS table it keys into, so every fuel builder and every consumer that needs
+# the house mask shares one definition instead of a literal 9.
+HOUSE_FUEL_CLASS = 9
+
 # --- Anderson/Scott-Burgan style no-wind/no-slope base ROS [m/min] --------
 # Keyed by a coarse fuel class id. These are representative baseline rates of
 # spread for the no-wind, no-slope condition; the wind/slope factors and the
@@ -116,6 +123,13 @@ class RasterStack:
     All arrays share shape ``(nrows, ncols)``. ``transform`` maps array
     (row, col) -> (lon, lat) for grid co-registration. ``delta_m`` is the cell
     size in metres.
+
+    ``source`` records WHICH builder produced the stack (``"srtm_gl3"``,
+    ``"synthetic"``, ``"rasters"``). The real-DEM mosaic is git-ignored, so a
+    run on a machine without it silently gets a different fuel map -- and a
+    different set of class-9 house cells. Carrying the provenance on the stack
+    lets the environment publish it into ``static_world_model``, turning that
+    from an invisible difference into a recorded one.
     """
 
     fuel: np.ndarray          # int fuel-class id per cell
@@ -123,6 +137,7 @@ class RasterStack:
     delta_m: float            # cell size [m]
     bounds: Tuple[float, float, float, float]  # (minlon, minlat, maxlon, maxlat)
     canopy: Optional[np.ndarray] = None
+    source: str = "unknown"   # which builder made this stack (provenance)
 
     @property
     def shape(self) -> Tuple[int, int]:

@@ -47,6 +47,9 @@ schedule:
                 - gis.cell_size_m
                 - gis.cell_state
                 - gis.wind_field
+                - gis.houses_total
+                - gis.houses_burned_this_step
+                - gis.houses_burned_total
               static_suffixes:
                 - gis.fuel_class
                 - gis.elevation_m
@@ -152,6 +155,9 @@ schedule:
             - gis_world.gis.fuel_class
             - gis_world.gis.elevation_m
             - gis_world.gis.wind_field
+            - gis_world.gis.houses_total
+            - gis_world.gis.houses_burned_this_step
+            - gis_world.gis.houses_burned_total
             - socal_grid.Powergrid-0.0-load-1664-1926.p_mw
             - socal_grid.Powergrid-0.0-load-1645-1907.p_mw
             - socal_grid.Powergrid-0.0-load-1631-1891.p_mw

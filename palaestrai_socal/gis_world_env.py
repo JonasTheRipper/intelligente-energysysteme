@@ -26,6 +26,9 @@ Sensor namespace (env uid ``gis_world`` -> ``gis_world.gis.<name>``):
     gis.wind_field   (2,)  [speed m/s, dir deg]       dynamic
     gis.front_size   (1,)  count of burning cells     dynamic
     gis.affected_cells (1,) burning + burned-out      dynamic
+    gis.houses_total (1,)  class-9 cells in the raster           static
+    gis.houses_burned_this_step (1,) houses destroyed this step  dynamic
+    gis.houses_burned_total (1,) houses destroyed so far         dynamic
 
 Actuators:
     gis.cell_mutations  padded-set of (row,col,state,layer) edits
@@ -58,7 +61,9 @@ from palaestrai_socal.agents.firefighter_core import (  # noqa: E402
     SUPPRESS_PERSIST_STEPS,
     age_suppressed,
 )
-from wildfire_cma.cma import BURNING, BURNED_OUT, UNBURNED  # noqa: E402
+from wildfire_cma.cma import (  # noqa: E402
+    BURNING, BURNED_OUT, HOUSE_FUEL_CLASS, UNBURNED,
+)
 from wildfire_cma.gis import (  # noqa: E402
     SOCAL_BOUNDS,
     synthetic_socal,
@@ -101,8 +106,13 @@ class GisWorldEnvironment(Environment):
         self._suppress_age: Optional[np.ndarray] = None
         self._wind: Tuple[float, float] = self.default_wind
         self._step = 0
+        # House telemetry. ``*_this_step`` is a per-step delta (so an objective
+        # can charge the increment without keeping state of its own);
+        # ``*_total`` is the running sum, which is what a results table wants
+        # and what survives an agent joining late or a dropped store row.
         self.total_houses = 0
         self.houses_burned_this_step = 0
+        self.houses_burned_total = 0
 
     # -- terrain -----------------------------------------------------------
     def _build_raster(self):
@@ -189,19 +199,24 @@ class GisWorldEnvironment(Environment):
             ),
             SensorInformation(
                 value=np.array([affected], dtype=np.float64),
-<<<<<<< HEAD
                 space=spaces.scalar_box(0.0, 1.0e7),
                 uid="gis.affected_cells",
             ),
-=======
-                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.affected_cells"),
             SensorInformation(
                 value=np.array([self.total_houses], dtype=np.float64),
-                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.houses_total"),
+                space=spaces.scalar_box(0.0, 1.0e7),
+                uid="gis.houses_total",
+            ),
             SensorInformation(
                 value=np.array([self.houses_burned_this_step], dtype=np.float64),
-                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.houses_burned_this_step"),
->>>>>>> c3a52f1 (Richtiger Push)
+                space=spaces.scalar_box(0.0, 1.0e7),
+                uid="gis.houses_burned_this_step",
+            ),
+            SensorInformation(
+                value=np.array([self.houses_burned_total], dtype=np.float64),
+                space=spaces.scalar_box(0.0, 1.0e7),
+                uid="gis.houses_burned_total",
+            ),
         ]
         return out
 
@@ -222,16 +237,19 @@ class GisWorldEnvironment(Environment):
     # -- lifecycle ---------------------------------------------------------
     def start_environment(self) -> EnvironmentBaseline:
         LOG.info("starting GisWorldEnvironment %s", self.uid)
-        self._raster = self._build_raster() # Maybe build socal_raster
-        self.total_houses = int(np.count_nonzero(self._raster.fuel == 9))
+        self._raster = self._build_raster()  # Maybe build socal_raster
+        self.total_houses = int(
+            np.count_nonzero(self._raster.fuel == HOUSE_FUEL_CLASS)
+        )
         self.houses_burned_this_step = 0
+        self.houses_burned_total = 0
         self._state = np.full(self._raster.shape, UNBURNED, dtype=np.int8)
         self._suppress_age = np.zeros(self._raster.shape, dtype=np.int16)
         self._wind = self.default_wind
         self._step = 0
         self.sensors = self._sensor_list()
         self.actuators = self._actuator_list()
-        
+
         return EnvironmentBaseline(
             sensors_available=self.sensors,
             actuators_available=self.actuators,
@@ -239,6 +257,15 @@ class GisWorldEnvironment(Environment):
                 "bounds": list(self.bounds),
                 "grid_shape": [self.raster_nrows, self.raster_ncols],
                 "cell_size_m": float(self._raster.delta_m),
+                # Provenance: which fuel/DEM builder actually ran. The real SRTM
+                # mosaic is git-ignored, so the same experiment file can produce
+                # a different fuel map (and a different set of house cells) on a
+                # machine without it. Recording it here makes a stored run
+                # self-describing instead of leaving that difference invisible.
+                "raster_source": str(getattr(self._raster, "source", "unknown")),
+                "house_cells": int(
+                    (self._raster.fuel == HOUSE_FUEL_CLASS).sum()
+                ),
             },
         )
 
@@ -288,17 +315,25 @@ class GisWorldEnvironment(Environment):
         # breakdown). The env owns this timer, exactly as the fire agent owns
         # the burn timer, so the reversion is recorded as ordinary state.
         age_suppressed(self._state, self._suppress_age, SUPPRESS_PERSIST_STEPS)
-        
 
         front_size = int((self._state == BURNING).sum())
         affected = int(((self._state == BURNING) | (self._state == BURNED_OUT)).sum())
 
-        self.houses_burned_this_step = int(np.count_nonzero(
-            (self._raster.fuel == 9)
-            & (previous_state != BURNED_OUT)
-            & (self._state == BURNED_OUT)
-        ))
-        
+        # Houses destroyed THIS step: class-9 cells that just became terminal.
+        # Counting the transition (rather than the BURNED_OUT population) makes
+        # the delta non-double-counting and monotone. Note a house still
+        # BURNING when the episode ends is never counted -- it is doomed under
+        # arbitration (BURNED_OUT is terminal) but has not yet transitioned, so
+        # the total can lag reality by up to ``t_burn_steps`` at the very end.
+        self.houses_burned_this_step = int(
+            np.count_nonzero(
+                (self._raster.fuel == HOUSE_FUEL_CLASS)
+                & (previous_state != BURNED_OUT)
+                & (self._state == BURNED_OUT)
+            )
+        )
+        self.houses_burned_total += self.houses_burned_this_step
+
         self.sensors = self._sensor_list()
 
         world_state: Dict[str, object] = {
@@ -312,7 +347,9 @@ class GisWorldEnvironment(Environment):
             "wind_dir_deg": float(self._wind[1]),
             "front_size": front_size,
             "affected_cells": affected,
+            "houses_total": self.total_houses,
             "houses_burned_this_step": self.houses_burned_this_step,
+            "houses_burned_total": self.houses_burned_total,
             "cell_state": spaces.encode_grid(self._state, dtype="int8"),
         }
         # static layers only on the first step (DEM is large) so the timelapse

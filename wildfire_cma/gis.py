@@ -30,7 +30,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from .cma import RasterStack
+from .cma import HOUSE_FUEL_CLASS, RasterStack
 
 LOG = logging.getLogger("wildfire_cma.gis")
 
@@ -101,17 +101,22 @@ def synthetic_socal(
     # ocean to the SW corner -> non-burnable
     ocean = (xx / ncols + yy / nrows) < 0.18
     fuel[ocean] = 0
-    # scattered urban patches -> non-burnable
-    urban = rng.random((nrows, ncols)) < 0.04
-    fuel[urban] = 0
-    # random fuel-break roads
+    # Scattered built-up patches (class 9 = houses), matching _fuel_from_dem so
+    # the synthetic fallback is not silently house-free. ``& ~ocean`` guards the
+    # same overwrite bug the real-DEM builder had: this scatter runs after the
+    # water mask, so without it 4% of the sea becomes burnable houses.
+    urban = (rng.random((nrows, ncols)) < 0.04) & ~ocean
+    fuel[urban] = HOUSE_FUEL_CLASS
+    # random fuel-break roads (cut through settlement too -- roads are the
+    # non-burnable break, so they legitimately overwrite class 9)
     for _ in range(6):
         r = rng.integers(0, nrows)
         fuel[r, :] = np.where(rng.random(ncols) < 0.6, 0, fuel[r, :])
 
     delta = _approx_cell_size_m(bounds, nrows, ncols)
     LOG.info("Synthetic SoCal raster %dx%d, ~%.0f m cells", nrows, ncols, delta)
-    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds)
+    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds,
+                       source="synthetic")
 
 
 # Default location of the cached real SRTM GL3 mosaic produced by
@@ -170,10 +175,15 @@ def _fuel_from_dem(dem: np.ndarray, seed: int = 7) -> np.ndarray:
     fuel[(dem >= 1800) & (dem < 2800)] = 5           # high timber-litter
     fuel[dem >= 2800] = 0          # alpine / rock above treeline -> non-burnable
     fuel[dem <= 0] = 0             # ocean / Salton Trough water -> non-burnable
-    # light scatter of urban / agricultural non-burnable cells in low valleys
-    low = dem < 250
+    # Light scatter of built-up cells (class 9 = houses) in low valleys.
+    # ``dem > 0`` is load-bearing: ``dem < 250`` alone also selects every ocean
+    # and Salton-Trough cell, and this scatter is applied AFTER the water mask
+    # above, so without it ~55%% of the "houses" land below sea level -- and,
+    # because class 9 is burnable, let fire spread across open water. The bug
+    # was invisible while this line assigned 0 (overwriting water with water).
+    low = (dem < 250) & (dem > 0)
     urban = (rng.random(dem.shape) < 0.03) & low
-    fuel[urban] = 9 # That 
+    fuel[urban] = HOUSE_FUEL_CLASS
     return fuel
 
 
@@ -206,7 +216,8 @@ def socal_from_srtm(
     LOG.info("Real SRTM SoCal raster %dx%d from %s (~%.0f m cells, "
              "elev %.0f..%.0f m)", nrows, ncols, _os.path.basename(path),
              delta, float(dem.min()), float(dem.max()))
-    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds)
+    return RasterStack(fuel=fuel, dem=dem, delta_m=delta, bounds=bounds,
+                       source="srtm_gl3")
 
 
 def from_rasters(
@@ -262,7 +273,7 @@ def from_rasters(
 
     delta = _approx_cell_size_m(bounds, *fuel.shape)
     return RasterStack(fuel=fuel.astype(np.int16), dem=np.asarray(dem_raw, float),
-                       delta_m=delta, bounds=bounds)
+                       delta_m=delta, bounds=bounds, source="rasters")
 
 
 def build_socal_raster(

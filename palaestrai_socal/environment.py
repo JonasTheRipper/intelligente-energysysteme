@@ -172,10 +172,21 @@ class SoCalWildfireEnvironment(Environment):
                          float(r.dem.min()), float(r.dem.max()))
                 return r
             except FileNotFoundError as exc:
-                LOG.warning("Real DEM unavailable (%s); using synthetic", exc)
-        return synthetic_socal(
+                # Deliberate graceful degradation here (unlike GisWorldEnvironment,
+                # which hard-fails): the README documents that this driver runs
+                # with or without the git-ignored DEM binary. Log it loudly --
+                # the synthetic raster has a different fuel map and a different
+                # set of class-9 house cells, so results are NOT comparable.
+                LOG.warning(
+                    "Real DEM unavailable (%s); falling back to the SYNTHETIC "
+                    "raster -- fuel map and house cells differ from a real-DEM "
+                    "run, so KPIs from the two are not comparable", exc,
+                )
+        r = synthetic_socal(
             nrows=self.raster_nrows, ncols=self.raster_ncols, seed=self.seed or 7
         )
+        LOG.info("Raster source: %s", getattr(r, "source", "unknown"))
+        return r
 
     # -- weather ------------------------------------------------------------
     def _load_weather(self):
