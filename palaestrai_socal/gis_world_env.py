@@ -101,6 +101,8 @@ class GisWorldEnvironment(Environment):
         self._suppress_age: Optional[np.ndarray] = None
         self._wind: Tuple[float, float] = self.default_wind
         self._step = 0
+        self.total_houses = 0
+        self.houses_burned_this_step = 0
 
     # -- terrain -----------------------------------------------------------
     def _build_raster(self):
@@ -187,9 +189,19 @@ class GisWorldEnvironment(Environment):
             ),
             SensorInformation(
                 value=np.array([affected], dtype=np.float64),
+<<<<<<< HEAD
                 space=spaces.scalar_box(0.0, 1.0e7),
                 uid="gis.affected_cells",
             ),
+=======
+                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.affected_cells"),
+            SensorInformation(
+                value=np.array([self.total_houses], dtype=np.float64),
+                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.houses_total"),
+            SensorInformation(
+                value=np.array([self.houses_burned_this_step], dtype=np.float64),
+                space=spaces.scalar_box(0.0, 1.0e7), uid="gis.houses_burned_this_step"),
+>>>>>>> c3a52f1 (Richtiger Push)
         ]
         return out
 
@@ -210,13 +222,16 @@ class GisWorldEnvironment(Environment):
     # -- lifecycle ---------------------------------------------------------
     def start_environment(self) -> EnvironmentBaseline:
         LOG.info("starting GisWorldEnvironment %s", self.uid)
-        self._raster = self._build_raster()
+        self._raster = self._build_raster() # Maybe build socal_raster
+        self.total_houses = int(np.count_nonzero(self._raster.fuel == 9))
+        self.houses_burned_this_step = 0
         self._state = np.full(self._raster.shape, UNBURNED, dtype=np.int8)
         self._suppress_age = np.zeros(self._raster.shape, dtype=np.int16)
         self._wind = self.default_wind
         self._step = 0
         self.sensors = self._sensor_list()
         self.actuators = self._actuator_list()
+        
         return EnvironmentBaseline(
             sensors_available=self.sensors,
             actuators_available=self.actuators,
@@ -266,16 +281,25 @@ class GisWorldEnvironment(Environment):
 
     def update(self, actuators: List[ActuatorInformation]) -> EnvironmentState:
         self._step += 1
+        previous_state = self._state.copy()
         self._apply_mutations(actuators)
         # Age the firefighter's retardant lines: a cell SUPPRESSED for
         # SUPPRESS_PERSIST_STEPS env steps reverts to UNBURNED (retardant
         # breakdown). The env owns this timer, exactly as the fire agent owns
         # the burn timer, so the reversion is recorded as ordinary state.
         age_suppressed(self._state, self._suppress_age, SUPPRESS_PERSIST_STEPS)
-        self.sensors = self._sensor_list()
+        
 
         front_size = int((self._state == BURNING).sum())
         affected = int(((self._state == BURNING) | (self._state == BURNED_OUT)).sum())
+
+        self.houses_burned_this_step = int(np.count_nonzero(
+            (self._raster.fuel == 9)
+            & (previous_state != BURNED_OUT)
+            & (self._state == BURNED_OUT)
+        ))
+        
+        self.sensors = self._sensor_list()
 
         world_state: Dict[str, object] = {
             "kind": "gis_world",
@@ -288,6 +312,7 @@ class GisWorldEnvironment(Environment):
             "wind_dir_deg": float(self._wind[1]),
             "front_size": front_size,
             "affected_cells": affected,
+            "houses_burned_this_step": self.houses_burned_this_step,
             "cell_state": spaces.encode_grid(self._state, dtype="int8"),
         }
         # static layers only on the first step (DEM is large) so the timelapse

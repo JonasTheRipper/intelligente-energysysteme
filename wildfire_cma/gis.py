@@ -173,7 +173,7 @@ def _fuel_from_dem(dem: np.ndarray, seed: int = 7) -> np.ndarray:
     # light scatter of urban / agricultural non-burnable cells in low valleys
     low = dem < 250
     urban = (rng.random(dem.shape) < 0.03) & low
-    fuel[urban] = 9
+    fuel[urban] = 9 # That 
     return fuel
 
 
