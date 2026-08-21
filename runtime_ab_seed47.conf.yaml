@@ -1,7 +1,0 @@
-# A/B replicate 1 (run seed 47). Own database: the store readers filter on
-# phase uid, so two runs in one DB come back merged and interleaved.
-store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/moo_ab_seed47"
-executor_bus_port: 4242
-logger_port: 0
-public_bind: False
-store_buffer_size: 100

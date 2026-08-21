@@ -1,0 +1,8 @@
+# A/B replicate 1 (run seed 47), own database.
+# Phase 4 = MooObjective, phase 5 = SaidiObjective control; identical in every
+# other respect, neither sharing a store with any other run.
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/moo_ab_run1"
+executor_bus_port: 4242
+logger_port: 0
+public_bind: False
+store_buffer_size: 100

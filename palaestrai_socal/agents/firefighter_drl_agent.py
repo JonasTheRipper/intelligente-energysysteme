@@ -56,6 +56,31 @@ import numpy as np
 from palaestrai.agent import ActuatorInformation, SensorInformation
 from palaestrai.types import Mode
 
+# ---------------------------------------------------------------------------
+# Keep the SAC brain/muscle on the CPU.
+#
+# hARL picks its device with a hard-coded
+#     self._device = T.device("cuda" if T.cuda.is_available() else "cpu")
+# and offers no override. On the DISCRETE action path it then moves the
+# networks to CUDA but leaves the replay batch on the host, so the first
+# gradient step dies with
+#     RuntimeError: Expected all tensors to be on the same device, but got
+#     mat1 is on cpu, different from other tensors on cuda:0
+# (harl/sac/brain.py::_compute_loss_q_discrete). `_log_alpha` is also created
+# on the device in __init__ while the nets are built later in setup(), so
+# reassigning `_device` afterwards only relocates the mismatch.
+#
+# Hiding the GPU before torch initialises CUDA restores hARL's CPU path
+# exactly as it behaved before a CUDA-enabled torch was installed. No loss:
+# the policy is a 17 -> 256 -> 256 -> 4 MLP at batch 64, which is dominated by
+# kernel-launch overhead on a GPU -- this workload is rollout-bound, not
+# gradient-bound. Uses setdefault, so `export CUDA_VISIBLE_DEVICES=0` still
+# opts back in if hARL ever fixes the discrete path.
+import os as _os  # noqa: E402
+
+_os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+# ---------------------------------------------------------------------------
+
 from harl import SACMuscle
 from harl.sac.action_type import ActionType
 

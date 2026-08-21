@@ -1093,7 +1093,6 @@ schedule:
             - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
             - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
             - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
-            - gis_world.gis.cell_mutations
           actuators:
             - gis_world.gis.cell_mutations
         - name: damage_mapper
@@ -1335,7 +1334,6 @@ schedule:
             - socal_grid.Powergrid-0.0-load-1629-1889.p_mw
             - socal_grid.Powergrid-0.0-load-1625-1885.p_mw
             - socal_grid.Powergrid-0.0-load-1700-1962.p_mw
-            - gis_world.gis.cell_mutations
           actuators:
             - gis_world.gis.cell_mutations
         - name: damage_mapper
