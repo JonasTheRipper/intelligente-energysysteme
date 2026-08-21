@@ -98,8 +98,12 @@ def _phase_frames(store: str, phase: str) -> List[Dict[str, object]]:
 
 
 def compare_phase(
-    store_a: str, store_b: str, phase: str, la: str, lb: str
+    store_a: str, store_b: str, phase: str, la: str, lb: str,
+    full: bool = False,
 ) -> Tuple[bool, List[str]]:
+    """Compare one phase. ``full`` reports every step instead of stopping at
+    the first divergence -- needed to plot a divergence curve, since the
+    early-exit default yields exactly one point."""
     fa, fb = _phase_frames(store_a, phase), _phase_frames(store_b, phase)
     msgs: List[str] = []
     if len(fa) != len(fb):
@@ -121,7 +125,8 @@ def compare_phase(
                 f"{a['cell_state_sha']} != {b['cell_state_sha']}"
             )
             ok = False
-            break
+            if not full:
+                break
         for key in ("houses_total", "houses_burned_total"):
             if a[key] != b[key]:
                 msgs.append(
@@ -136,7 +141,7 @@ def compare_phase(
                 f"  step {a['step']}: load p_mw differs, max |delta| = {worst:.6g} MW"
             )
             ok = False
-        if not ok:
+        if not ok and not full:
             break
     if ok:
         msgs.append(
@@ -153,6 +158,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--label-a", default="A")
     p.add_argument("--label-b", default="B")
     p.add_argument("--phase", action="append", help="phase uid (repeatable)")
+    p.add_argument("--full", action="store_true",
+                   help="report every diverging step, not just the first")
     ns = p.parse_args(argv)
 
     phases = ns.phase or [d["uid"] for d in sr.list_phases(ns.a)]
@@ -160,7 +167,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"comparing {ns.label_a} vs {ns.label_b}")
     for phase in phases:
         print(f"\n[{phase}]")
-        ok, msgs = compare_phase(ns.a, ns.b, phase, ns.label_a, ns.label_b)
+        ok, msgs = compare_phase(
+            ns.a, ns.b, phase, ns.label_a, ns.label_b, full=ns.full
+        )
         for m in msgs:
             print(m)
         all_ok &= ok
