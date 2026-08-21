@@ -247,9 +247,13 @@ def test_forward_fill_empty_run(monkeypatch):
 # static tables
 # ==========================================================================
 def test_default_phases_and_fleet_tables():
+    # phase_0_no_ff is harvested too: it is the ONLY phase with fire-driven
+    # load shedding, so without it the SAIDI reward column is uniformly zero.
     assert h.DEFAULT_PHASES == (
+        "phase_0_no_ff",
         "phase_1_air", "phase_2_air_ground", "phase_3_full_triage",
     )
+    assert all(v == 0 for v in h.PHASE_FLEET["phase_0_no_ff"].values())
     # every default phase has a fleet entry with the five resource keys.
     for ph in h.DEFAULT_PHASES:
         fleet = h.PHASE_FLEET[ph]
@@ -323,3 +327,89 @@ def test_harvest_full_writes_npz(tmp_path):
         assert meta["n_tactics"] == drl.N_TACTICS
         assert meta["n_transitions"] == info["n"]
         assert set(meta["phases"]).issubset(set(h.DEFAULT_PHASES))
+
+
+# ---------------------------------------------------------------------------
+# --objective moo: the offline reward must equal the ONLINE objective
+# ---------------------------------------------------------------------------
+# The harvester recomputes the reward from stored telemetry rather than reading
+# muscle_actions.objective, so the same reward function now exists in two
+# places. That is a drift hazard, and this is the test that catches it: for
+# identical inputs, harvest_phase's MOO arithmetic must return exactly what
+# MooObjective.internal_reward would have returned online.
+
+def _moo_reward_from_harvester(dsaidi, burned_step, houses_total, *,
+                               saidi_scale=60.0, alpha=0.5, beta=0.5,
+                               saidi_norm=1e-3, houses_norm=1.0,
+                               houses_scale=0.02):
+    """Replicate the expression harvest_phase uses for objective='moo'."""
+    r_saidi = -float(dsaidi) / saidi_scale
+    r_houses = (
+        -(max(0.0, burned_step) / houses_total) / houses_scale
+        if houses_total > 0 else 0.0
+    )
+    return alpha * (r_saidi / saidi_norm) + beta * (r_houses / houses_norm)
+
+
+@pytest.mark.unit
+def test_harvester_moo_reward_matches_the_online_objective():
+    pytest.importorskip("palaestrai.agent.objective")
+    from palaestrai_socal.agents.moo_objective import MooObjective
+
+    class _Info:
+        def __init__(self, uid, value):
+            self.uid, self.value = uid, value
+
+    class _Tail:
+        def __init__(self, readings):
+            self.sensor_readings = readings
+
+    class _Mem:
+        def __init__(self, readings):
+            self._t = _Tail(readings)
+
+        def tail(self, n=1):
+            return self._t
+
+    houses_total, burned_step = 101.0, 2.0
+    base_mw, served_mw, dt_min, scale = 232.237, 222.237, 60.0, 60.0
+
+    # what the environment/reader would report for that step
+    disconnected = base_mw - served_mw
+    dsaidi = (disconnected * drl.CUSTOMERS_PER_MW * dt_min) / (
+        base_mw * drl.CUSTOMERS_PER_MW
+    )
+
+    obj = MooObjective(
+        alpha=0.5, beta=0.5,
+        saidi_params={"base_served_mw": base_mw, "scale": scale, "dt_min": dt_min},
+        houses_params={"scale": 0.02},
+    )
+    online = obj.internal_reward(_Mem([
+        _Info("gis_world.gis.houses_total", np.array([houses_total])),
+        _Info("gis_world.gis.houses_burned_this_step", np.array([burned_step])),
+        _Info("socal_grid.Powergrid-0.0-load-1-1.p_mw", np.array([served_mw])),
+    ]))
+
+    offline = _moo_reward_from_harvester(
+        dsaidi, burned_step, houses_total, saidi_scale=scale
+    )
+    assert offline == pytest.approx(online, rel=1e-9), (
+        f"offline harvest reward {offline} != online objective {online}; "
+        "the two copies of the MOO reward function have drifted"
+    )
+
+
+@pytest.mark.unit
+def test_harvester_moo_reward_is_never_positive():
+    for dsaidi, burned, total in ((0, 0, 101), (0.5, 3, 101), (0, 5, 0)):
+        assert _moo_reward_from_harvester(dsaidi, burned, total) <= 0.0
+
+
+@pytest.mark.unit
+def test_harvester_moo_falls_back_when_no_settlement():
+    """A raster with no class-9 cells contributes only the SAIDI term."""
+    both = _moo_reward_from_harvester(0.5, 2, 101)
+    saidi_only = _moo_reward_from_harvester(0.5, 2, 0)
+    assert saidi_only > both          # less negative: the house charge is gone
+    assert saidi_only == pytest.approx(_moo_reward_from_harvester(0.5, 0, 101))

@@ -30,6 +30,11 @@ Sensor namespace (env uid ``gis_world`` -> ``gis_world.gis.<name>``):
     gis.houses_burned_this_step (1,) houses destroyed this step  dynamic
     gis.houses_burned_total (1,) houses destroyed so far         dynamic
 
+Params of note:
+    raster_seed   pins the fuel/house raster across phases (see __init__);
+                  without it each phase gets a different conductor subseed and
+                  therefore a different terrain.
+
 Actuators:
     gis.cell_mutations  padded-set of (row,col,state,layer) edits
     gis.wind_override   (2,) [speed, dir]; <0 entries mean "keep default"
@@ -90,6 +95,23 @@ class GisWorldEnvironment(Environment):
         self.raster_ncols = int(p.get("raster_ncols", 760))
         self.bounds = tuple(p.get("bounds", SOCAL_BOUNDS))
         self.seed = int(p.get("seed", 0))
+        # Raster seed, deliberately SEPARATE from ``seed``.
+        #
+        # EnvironmentConductor._load_environment does
+        # ``env_params.update({"seed": self.seed + len(self._environments)})``,
+        # and those conductor seeds come from ExperimentRun.create_subseed(),
+        # which draws sequentially from the run RNG. So every phase gets a
+        # DIFFERENT seed and a YAML ``seed:`` is silently overwritten -- which
+        # means the fuel raster (and with it the class-9 house scatter) differs
+        # from phase to phase. Measured on a 4-phase Eaton run: fuel hashes
+        # e968c5ec / 8014f219 / 72c55169 / 88a079ae with 122 / 108 / 113 / 132
+        # house cells, i.e. the phases of an A/B comparison were never on the
+        # same terrain.
+        #
+        # ``raster_seed`` is read from the YAML params and is NOT touched by the
+        # conductor, so setting it pins the terrain across phases. Unset, the
+        # behaviour is exactly as before.
+        self.raster_seed = int(p.get("raster_seed", 0)) or (self.seed or 7)
         self.use_real_dem = bool(p.get("use_real_dem", True))
         self.env_step_min = float(p.get("env_step_min", 60.0))
         self.max_steps = int(p.get("max_steps", 120))
@@ -122,7 +144,7 @@ class GisWorldEnvironment(Environment):
                     nrows=self.raster_nrows,
                     ncols=self.raster_ncols,
                     bounds=self.bounds,
-                    seed=self.seed or 7,
+                    seed=self.raster_seed,
                 )
             except FileNotFoundError as exc:
                 raise FileNotFoundError(
@@ -133,7 +155,7 @@ class GisWorldEnvironment(Environment):
             nrows=self.raster_nrows,
             ncols=self.raster_ncols,
             bounds=self.bounds,
-            seed=self.seed or 7,
+            seed=self.raster_seed,
         )
 
     # -- spaces ------------------------------------------------------------

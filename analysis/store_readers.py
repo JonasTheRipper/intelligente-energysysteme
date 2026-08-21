@@ -87,6 +87,43 @@ def _suffix(uid: str) -> str:
     return uid.split(".", 1)[1] if "." in uid else uid
 
 
+def latest_instance_id(con, ph: str = "?") -> Optional[int]:
+    """Newest ``experiment_run_instances.id`` in the store, or None if empty.
+
+    Re-running the same experiment file writes a SECOND set of phases with the
+    SAME uids into the same database. Every reader here filters on
+    ``experiment_run_phases.uid`` / ``.number`` only, so without an instance
+    filter two runs come back merged -- and because env rows are ordered by
+    ``simtime_ticks`` first, their steps interleave rather than concatenate.
+    Nothing errors; the data is just silently wrong.
+
+    Callers default to this newest instance, which is almost always the run you
+    just finished. Pass an explicit ``instance_id`` to pin an older one, or
+    ``instance_id=0`` to opt out and read across every run (the pre-existing
+    behaviour).
+    """
+    try:
+        cur = con.cursor()
+        cur.execute("SELECT MAX(id) FROM experiment_run_instances")
+        row = cur.fetchone()
+    except Exception:
+        # Partial / hand-built stores (and the test fixtures) may not carry the
+        # instance table at all. Nothing to disambiguate then -- fall through to
+        # the unfiltered behaviour rather than failing the read.
+        return None
+    return int(row[0]) if row and row[0] is not None else None
+
+
+def _instance_clause(con, ph: str, instance_id: Optional[int]):
+    """Return ``(sql_fragment, params)`` restricting rows to one run instance."""
+    if instance_id == 0:
+        return "", []
+    resolved = instance_id if instance_id else latest_instance_id(con, ph)
+    if resolved is None:
+        return "", []
+    return f" AND p.experiment_run_instance_id = {ph}", [int(resolved)]
+
+
 def list_phases(store_uri: str) -> List[dict]:
     """List the palaestrAI phases present in a store, in run order.
 
@@ -146,6 +183,7 @@ def _fetch_env_rows(
     ph: str = "?",
     phase_uid: Optional[str] = None,
     phase_index: Optional[int] = None,
+    instance_id: Optional[int] = None,
 ) -> List[Tuple[int, str]]:
     """Return ``[(id, state_dump), ...]`` for one environment, in step order.
 
@@ -162,14 +200,20 @@ def _fetch_env_rows(
     params: List = [env_uid]
     join = ""
     where = f"e.uid = {ph}"
-    if phase_uid is not None or phase_index is not None:
+    # Resolve the instance filter first: it is empty for stores with no
+    # experiment_run_instances table, and the phase JOIN must only be added when
+    # something needs it (hand-built fixtures carry neither table).
+    clause, extra = _instance_clause(con, ph, instance_id)
+    if phase_uid is not None or phase_index is not None or clause:
         join = "JOIN experiment_run_phases p ON p.id = e.experiment_run_phase_id "
         if phase_uid is not None:
             where += f" AND p.uid = {ph}"
             params.append(phase_uid)
-        else:
+        elif phase_index is not None:
             where += f" AND p.number = {ph}"
             params.append(int(phase_index))
+        where += clause
+        params.extend(extra)
     q = (
         "SELECT ws.id, ws.state_dump FROM world_states ws "
         "JOIN environments e ON e.id = ws.environment_id "
@@ -213,10 +257,41 @@ def _line_flow_mw(sensors: Dict[str, np.ndarray]) -> Optional[float]:
     return total if found else None
 
 
-def _grid_served_mw(sensors: Dict[str, np.ndarray]) -> float:
-    """Sum every load real-power sensor -> total served MW for the step."""
+def _grid_served_mw(
+    sensors: Dict[str, np.ndarray],
+    load_uids: Optional[set] = None,
+) -> float:
+    """Sum load real-power sensors -> served MW for the step.
+
+    With ``load_uids`` given, only those sensors are summed. That matters when
+    the number is to be compared against an AGENT's view: SaidiObjective sums
+    the ``*-load-*.p_mw`` sensors that agent subscribes to, which on the Eaton
+    scenario is 14 loads totalling ~232 MW, whereas the stored dump carries
+    every load in the grid (~27,100 MW). Baselining against the wrong set makes
+    the offline SAIDI ~117x smaller than the online one -- silently, since both
+    are plausible numbers. Keys are matched on the env-stripped suffix, so
+    either form of uid may be passed.
+    """
+    # Match on the element tail, because the two sides carry the environment
+    # prefix inconsistently: the stored dump keys keep it
+    # ("socal_grid.Powergrid-0.0-load-7-9.p_mw") while a caller may pass either
+    # form. Comparing raw strings silently intersects to nothing.
+    wanted = None
+    if load_uids is not None:
+        wanted = {
+            u.rsplit(".", 2)[-2] + "." + u.rsplit(".", 1)[-1]
+            if u.count(".") >= 2 else u
+            for u in load_uids
+        }
     total = 0.0
     for uid, v in sensors.items():
+        if wanted is not None:
+            tail = (
+                uid.rsplit(".", 2)[-2] + "." + uid.rsplit(".", 1)[-1]
+                if uid.count(".") >= 2 else uid
+            )
+            if tail not in wanted:
+                continue
         if uid.endswith(".p_mw") and "-load-" in uid:
             try:
                 total += float(np.asarray(v).ravel()[0])
@@ -232,6 +307,8 @@ def read_run(
     env_step_min: float = 60.0,
     phase_uid: Optional[str] = None,
     phase_index: Optional[int] = None,
+    instance_id: Optional[int] = None,
+    load_uids: Optional[set] = None,
 ) -> Tuple[List[dict], dict]:
     """Reconstruct ``(snaps, meta)`` for ``render()`` from the store.
 
@@ -260,8 +337,12 @@ def read_run(
     """
     con, ph = _connect(store_uri)
     try:
-        gis_rows = _fetch_env_rows(con, gis_uid, ph, phase_uid, phase_index)
-        grid_rows = _fetch_env_rows(con, grid_uid, ph, phase_uid, phase_index)
+        gis_rows = _fetch_env_rows(
+            con, gis_uid, ph, phase_uid, phase_index, instance_id
+        )
+        grid_rows = _fetch_env_rows(
+            con, grid_uid, ph, phase_uid, phase_index, instance_id
+        )
     finally:
         con.close()
     if not gis_rows:
@@ -301,7 +382,7 @@ def read_run(
     lineflow_by_step: List[Optional[float]] = []
     for (_id, dump) in grid_rows:
         gsen = _sensors_by_suffix(dump)
-        served_by_step.append(_grid_served_mw(gsen))
+        served_by_step.append(_grid_served_mw(gsen, load_uids))
         volts = _bus_voltages(gsen)
         if volts.size:
             vmin_by_step.append(float(volts.min()))
@@ -335,6 +416,18 @@ def read_run(
         wind = sm.get("gis.wind_field", np.array([0.0, 0.0]))
         wind_speed = float(np.asarray(wind).ravel()[0])
 
+        # v0.8 structural telemetry. Absent in pre-v0.8 stores (and in any run
+        # whose StoreDumpTrimmer does not keep the gis.houses_* suffixes), in
+        # which case these stay 0 and any houses-based metric reads as "no
+        # settlement" rather than crashing.
+        def _scalar(key: str) -> float:
+            v = sm.get(key)
+            return float(np.asarray(v).ravel()[0]) if v is not None and np.asarray(v).size else 0.0
+
+        houses_total = _scalar("gis.houses_total")
+        houses_burned_step = _scalar("gis.houses_burned_this_step")
+        houses_burned_total = _scalar("gis.houses_burned_total")
+
         served = served_by_step[i] if i < len(served_by_step) else base_served
         disconnected = float(np.clip(base_served - served, 0.0, base_served))
         cust_disc = disconnected * CUSTOMERS_PER_MW
@@ -358,6 +451,9 @@ def read_run(
             "failed_lines": set(),
             "wind_speed": wind_speed,
             "saidi": saidi,
+            "houses_total": houses_total,
+            "houses_burned_this_step": houses_burned_step,
+            "houses_burned_total": houses_burned_total,
             "served_mw": served,
             # alias for callers that prefer the "consumed/served load" name.
             "load_mw": served,
@@ -394,6 +490,7 @@ def read_agent_objectives(
     agent_name: str,
     phase_uid: Optional[str] = None,
     phase_index: Optional[int] = None,
+    instance_id: Optional[int] = None,
 ) -> List[dict]:
     """Read an agent's per-decision objective (reward) trace from the store.
 
@@ -414,7 +511,8 @@ def read_agent_objectives(
         params: List = [agent_name]
         where = f"a.name = {ph}"
         join = ""
-        if phase_uid is not None or phase_index is not None:
+        clause, extra = _instance_clause(con, ph, instance_id)
+        if phase_uid is not None or phase_index is not None or clause:
             join = (
                 "JOIN experiment_run_phases p "
                 "ON p.id = a.experiment_run_phase_id "
@@ -422,9 +520,11 @@ def read_agent_objectives(
             if phase_uid is not None:
                 where += f" AND p.uid = {ph}"
                 params.append(phase_uid)
-            else:
+            elif phase_index is not None:
                 where += f" AND p.number = {ph}"
                 params.append(int(phase_index))
+            where += clause
+            params.extend(extra)
         q = (
             "SELECT ma.episode, ma.objective, ma.done, ma.simtimes "
             "FROM muscle_actions ma "

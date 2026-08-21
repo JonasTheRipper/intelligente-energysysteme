@@ -1,0 +1,13 @@
+# palaestrAI runtime config for the MOO teacher-harvest run.
+#
+# A DEDICATED database, not the shared `palaestrai` one. Re-running an
+# experiment writes a second set of phases with the SAME uids into the same
+# database, and the store readers filter on phase uid -- so two runs come back
+# merged and their steps interleave. A separate DB per harvestable run keeps
+# the provenance of data/offline/*.npz unambiguous.
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/moo_teacher_v2"
+executor_bus_port: 4242
+logger_port: 0
+public_bind: False
+# 1 commits once per record; batching cuts the store round-trips substantially.
+store_buffer_size: 100

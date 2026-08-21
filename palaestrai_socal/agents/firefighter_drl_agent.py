@@ -162,6 +162,17 @@ class LearningFirefighterMuscle(SACMuscle):
         self._prev_saidi = 0.0
         self._cum_customer_min = 0.0
         self._step_i = 0
+        # Warm-up exploration previously used the GLOBAL numpy RNG, so
+        # replicates of the same experiment file were not reproducible:
+        # re-running with the same `seed:` drew different warm-up actions. With
+        # start_steps=200 of a 1,200-step phase that is a sixth of training.
+        # Seed a private Generator from the muscle's own uid (palaestrAI mints
+        # it per rollout worker from the run seed), so a replicate reproduces
+        # and different run seeds differ deliberately rather than by accident.
+        self._explore_rng = np.random.default_rng(
+            abs(hash((str(getattr(self, "uid", "firefighter")), int(start_steps))))
+            % (2 ** 32)
+        )
         # one IncidentCommand per doctrine intent; rebuilt lazily so a doctrine
         # forces the requested attack while keeping the configured fleet mix.
         self._commanders: dict = {}
@@ -320,7 +331,7 @@ class LearningFirefighterMuscle(SACMuscle):
             and self.mode == Mode.TRAIN
         )
         if warmup or self._model is None:
-            return int(np.random.randint(drl.N_TACTICS))
+            return int(self._explore_rng.integers(drl.N_TACTICS))
         import torch as T
 
         assert self._model.action_type == ActionType.DISCRETE, (
