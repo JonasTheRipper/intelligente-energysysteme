@@ -1,0 +1,16 @@
+# A/B replicate 3 (run seed 47) -- the POST-FIX re-run of moo_ab_run1.
+#
+# Same experiment file, same seed 47, own database. The only difference from
+# run1 is the per-episode Muscle.reset() fix (wildfire ignition latch, damage
+# mapper shed-bus latch, DRL observation accumulators), which lives entirely in
+# palaestrai_socal/agents/*.py -- the run document is byte-identical. So run1
+# vs run3 isolates the fix.
+#
+# run1 is deliberately KEPT: it is the record of the pre-fix failure (19 of 20
+# training episodes had no fire) and the fixture for the empty-episode guard in
+# analysis/ab_report.py.
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/moo_ab_run3"
+executor_bus_port: 4244
+logger_port: 0
+public_bind: False
+store_buffer_size: 100
