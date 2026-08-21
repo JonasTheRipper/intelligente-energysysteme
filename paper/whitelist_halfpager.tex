@@ -51,11 +51,10 @@
 The \texttt{socal\_grid} environment advertises \textbf{66{,}223 sensors and
 11{,}250 actuators}: 9{,}637 pandapower elements (2{,}294 buses, 2{,}595 lines,
 2{,}465 sgens, 1{,}932 loads, 345 transformers) at roughly seven attributes
-each. This is a property of the grid model and the \texttt{powergrid} module,
-not of any one run --- every experiment in the repository sees the same number.
-The agents subscribe to \textbf{31} of them. The remaining 99.95\,\% are
-constructed, serialised, shipped across the message bus and discarded, once per
-step, for the whole of training.
+each. This follows from the grid model and the \texttt{powergrid} module, so
+every experiment in the repository sees it. Agents subscribe to \textbf{31}; the
+remaining 99.95\,\% are built, serialised, shipped across the message bus and
+discarded, once per step, for the whole of training.
 
 \section{Where the filtering happens}
 \begin{center}
@@ -85,29 +84,27 @@ step, for the whole of training.
 \end{center}
 \vspace{-0.6em}
 
-The filter runs \emph{between} enumeration and entity creation, so a pruned
-sensor is never wired, never stepped and never serialised --- the cost is not
-reduced, it is not incurred. Two properties make this safe rather than merely
-fast. First, palaestrAI validates every agent subscription against the
-advertised sensors at setup and raises before the first step on any mismatch, so
-a run that starts has full agent observability \emph{by construction}: the
-filter cannot silently starve a learner, only abort the run. Second, filtering
-preserves the relative order of the survivors, so summation order in reward
-computation --- and hence its floating-point result --- is unchanged.
+The filter runs \emph{between} enumeration and entity creation: a pruned sensor
+is never wired, stepped or serialised, so the cost is not reduced but never
+incurred. Two properties make this safe rather than merely fast. palaestrAI
+validates every agent subscription against the advertised sensors at setup and
+raises before the first step, so a run that starts has full agent observability
+\emph{by construction} --- the filter can abort a run, never silently starve a
+learner. And it preserves the survivors' relative order, so summation order in
+reward computation, and hence its floating-point result, is unchanged.
 
 \section{Validation}
-Four arms were generated from one source run document by exactly one documented
-mutation each, then run for four scripted phases \x{} 60 steps. At every step we
-compared the SHA-256 of the fire raster, the structural telemetry, and all
-1{,}932 load sensors, and report the number of grid cells whose state differs.
-Agreement is exact, not within a tolerance.
+Four arms were generated from one source run document by one documented mutation
+each, then run for four scripted phases \x{} 60 steps. At every step we compared
+the SHA-256 of the fire raster, the structural telemetry and all 1{,}932 load
+sensors, reporting the number of cells whose state differs. Agreement is exact,
+not within a tolerance.
 
 \textbf{The \texttt{grid\_probe} agent was removed from every arm.} Its
 \texttt{DummyMuscle} writes \texttt{actuator.space.sample()} into
-\texttt{Powergrid-0.0-load-0-0.p\_mw} --- a random active-power setpoint each
-step, drawn from a gymnasium \texttt{Box} whose RNG is seeded from OS entropy at
-construction. With it present, two byte-identical configurations diverge, and no
-comparison between any two arms means anything.
+\texttt{Powergrid-0.0-load-0-0.p\_mw}: a random active-power setpoint each step,
+from a gymnasium \texttt{Box} seeded from OS entropy. With it present, two
+byte-identical configurations diverge and no comparison means anything.
 
 \vspace{0.25em}
 \begin{center}
@@ -125,16 +122,15 @@ Sensitivity control     & fire wind speed $+3.6\,\%$         & 360\\
 \vspace{-0.15em}
 
 The sensitivity control perturbs the fire driver's \texttt{base\_speed}
-($14 \rightarrow 14.5$\,m/s) with terrain and structure count held identical, and
-must diverge. It is what gives the two zeros meaning: without it, ``identical''
-reported twice is equally consistent with a comparison that detects nothing at
-all. Arm equivalence was checked against the \emph{stored} run documents rather
-than the configuration files --- treatment and baseline differ in exactly ten
-leaves: the run identifier, the derived experiment identifier, and the filter
-entries in each of the four phases.
+($14 \rightarrow 14.5$\,m/s) with terrain held identical, and must diverge. It is
+what gives the two zeros meaning: without it, ``identical'' reported twice is
+equally consistent with a comparison that detects nothing. Arms were compared as
+\emph{stored} run documents rather than configuration files --- treatment and
+baseline differ in exactly ten leaves: two identifiers, and the filter entries in
+each of the four phases.
 
 \section{Result}
-\begin{wrapfigure}{r}{0.40\textwidth}
+\begin{wrapfigure}{r}{0.35\textwidth}
   \vspace{-1.5em}
   \centering
   \includegraphics[width=\linewidth]{fig_cost.pdf}
@@ -145,20 +141,31 @@ entries in each of the four phases.
 \end{wrapfigure}
 Running each arm at two lengths (8 and 60 steps) determines
 $\text{total}=4\,(\text{startup}+\text{steps}\times\text{per\_step})$ exactly,
-separating fixed from marginal cost (Fig.~\ref{fig:cost}). Per-step simulation
-cost falls from $9.77$\,s to $1.45$\,s, a factor of \textbf{6.73}. Per-phase
-startup is unchanged ($53.8 \rightarrow 53.4$\,s, $1.01$\x). Wall-clock noise
-between two bit-identical runs was $0.6\,\%$, so the per-step figure is not a
-scheduling artefact. Because the fixed cost is untouched, any end-to-end ratio
-depends on episode length and understates the effect; the per-step number is the
-one that transfers.
+separating fixed from marginal cost (Fig.~\ref{fig:cost}). Per-step cost falls
+from $9.77$\,s to $1.45$\,s, a factor of \textbf{6.73}; per-phase startup is
+unchanged ($53.8 \rightarrow 53.4$\,s). Noise between two bit-identical runs was
+$0.6\,\%$, so this is not a scheduling artefact. Because fixed cost is untouched,
+any end-to-end ratio depends on episode length and understates the effect.
 
 \section{Limitations}
 Scripted policies only: the DRL phases still contain \texttt{grid\_probe}, so
-they are not reproducible against themselves and bit-comparison does not apply
---- equivalence for learners rests on the argument in Section~2. The store
-retains only load sensors (identically in both arms), so equivalence is
-established on the outcome-relevant projection: the one the grid-outage metric
-uses. One scenario, one seed.
+they are not reproducible against themselves and bit-comparison does not apply;
+equivalence for learners rests on Section~2. The store retains only load sensors
+(identically in both arms), so equivalence is established on the
+outcome-relevant projection. One scenario, one seed.
+
+\section{Reproducing this}
+\vspace{-0.3em}
+{\small\setlength{\baselineskip}{9pt}
+\begin{verbatim}
+python analysis/make_whitelist_configs.py  # arms, from one source document
+./run_whitelist_validation.sh              # ~2 h: all arms, both controls
+python analysis/cost_figure.py             # Figure 1
+\end{verbatim}}
+\vspace{-0.9em}
+The runner aborts before reporting the treatment if the reproducibility control
+diverges or the sensitivity control does not, and refuses to start if the arm
+documents have drifted from the generator. Each arm keeps its own database
+(\texttt{analysis/compare\_runs.py}).
 
 \end{document}
