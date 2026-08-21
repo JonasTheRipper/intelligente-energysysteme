@@ -335,6 +335,18 @@ class FirefighterMuscle(Muscle):
         }
         return actuators_available, None
 
+    def reset(self):
+        """Clear the per-episode telemetry accumulators.
+
+        ``IncidentCommand`` and the resource dataclasses are stateless between
+        steps (capacity is recomputed from wind/slope each call), so the fleet
+        needs no re-arming; only the cumulative counters carried for reporting
+        would otherwise keep climbing across episodes and make every episode
+        after the first look busier than it was.
+        """
+        self._line_km_cumulative = 0.0
+        self._last_telemetry = {}
+
     def update(self, update: Any):
         pass
 

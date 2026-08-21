@@ -213,6 +213,33 @@ class WildfireDriver:
         self._step = 0
         self._ignited = False
 
+    # -- episode boundary --------------------------------------------------
+    def reset(self) -> None:
+        """Re-arm the driver for a fresh episode WITHOUT rebuilding it.
+
+        palaestrAI resets the environment between episodes -- the raster goes
+        back to all-UNBURNED -- but the muscle (and therefore this driver)
+        survives. Without clearing the ignition latch the fire is injected once,
+        in episode 0, and every later episode runs its full length on an empty
+        raster. See :meth:`WildfireCmaMuscle.reset`.
+
+        Deliberately *not* reset:
+
+        ``self._cma.rng``
+            The stochastic spread stream continues across episodes, so each
+            episode draws a different fire. Re-seeding here would replay one
+            identical fire N times and remove the environment variation RL
+            training depends on. The run as a whole stays reproducible: the
+            whole sequence is determined by the single configured ``seed``.
+
+        The static build products (fuel raster, per-cell wind field, perimeter
+        mask) are episode-invariant and expensive -- rebuilding the driver would
+        re-read the perimeter shapefile every episode -- so they are kept.
+        """
+        self.burn_timer.fill(0)
+        self._step = 0
+        self._ignited = False
+
     # -- helpers -----------------------------------------------------------
     def ignition_cells(self) -> List[Tuple[int, int]]:
         """Resolve configured ignition points to raster ``(row, col)`` cells."""

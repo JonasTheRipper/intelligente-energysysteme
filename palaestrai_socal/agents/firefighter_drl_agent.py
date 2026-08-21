@@ -471,6 +471,40 @@ class LearningFirefighterMuscle(SACMuscle):
             np.array([act_id], dtype=np.float64),
         )
 
+    # -- episode boundary --------------------------------------------------
+    def reset(self):
+        """Clear per-EPISODE state; keep per-RUN state.
+
+        Three of the 17 observation features are built from accumulators that
+        are only meaningful within one episode:
+
+        ``_step_i``
+            feeds ``extract_obs(step=..., max_steps=...)``, the "how far through
+            the episode am I" feature. Left running it saturates at 1.0 from
+            episode 1 onward, so the policy believes every later episode is
+            permanently at its final step.
+        ``_cum_customer_min`` / ``_prev_saidi``
+            the cumulative-SAIDI and SAIDI-delta features. Left running they
+            carry the previous episode's outage into the new one, and the very
+            first delta of each episode is measured against a grid state that
+            no longer exists.
+
+        Deliberately **not** reset: ``self._actions_proposed``. That is the
+        SAC exploration warm-up counter (``_actions_proposed < start_steps``
+        selects uniform-random doctrines), and it counts interactions over the
+        whole *phase*, not the episode. Clearing it here would restart the
+        warm-up every episode and the policy would never leave exploration.
+        ``SACMuscle`` itself resets it in ``setup()``, once per worker, which is
+        the correct scope.
+
+        The learned model, its optimiser state and the replay buffer live on the
+        brain and are untouched by an episode boundary.
+        """
+        super().reset()
+        self._step_i = 0
+        self._cum_customer_min = 0.0
+        self._prev_saidi = 0.0
+
     def __repr__(self) -> str:
         return (
             f"LearningFirefighterMuscle(uid={self.uid}, "

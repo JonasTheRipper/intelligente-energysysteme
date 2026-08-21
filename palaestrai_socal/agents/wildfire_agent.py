@@ -204,6 +204,21 @@ class WildfireCmaMuscle(Muscle):
                 act(_coerce(vec, act))
         return actuators_available, len(muts)
 
+    def reset(self):
+        """Re-arm the fire for the next episode (palaestrAI episode boundary).
+
+        The environment is reset for us, but this muscle is kept alive across
+        episodes, and the ignition latch lives on the driver. Without this the
+        fire ignites in episode 0 only and every subsequent episode is 60 steps
+        of an unburnt raster -- silently, since an empty episode looks exactly
+        like a perfectly-suppressed one in the store.
+
+        The driver itself is preserved (see :meth:`WildfireDriver.reset`): its
+        raster and wind field do not change between episodes.
+        """
+        if self._driver is not None:
+            self._driver.reset()
+
     def update(self, update: Any):
         pass
 

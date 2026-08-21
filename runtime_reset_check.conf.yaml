@@ -1,0 +1,7 @@
+# Episode-reset verification (experiment_episode_reset_check.yml): own database
+# so a throwaway 3-episode check can never be mistaken for an A/B replicate.
+store_uri: "postgresql://palaestrai:socal_local@127.0.0.1:5433/reset_check"
+executor_bus_port: 4243
+logger_port: 0
+public_bind: False
+store_buffer_size: 100

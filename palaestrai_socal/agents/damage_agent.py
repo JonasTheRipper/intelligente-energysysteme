@@ -157,6 +157,21 @@ class DamageMapperMuscle(Muscle):
                         n_shed += 1
         return actuators_available, n_shed
 
+    def reset(self):
+        """Clear the latched shed-bus set at the episode boundary.
+
+        :class:`~palaestrai_socal.agents.damage_core.DamageMapperDriver` latches
+        shed buses monotonically -- correct within an episode (a burned-out
+        feeder is not re-energised), wrong across one: the grid comes back
+        healthy but every bus shed in an earlier episode would stay shed for the
+        rest of the phase, permanently depressing served MW.
+
+        The co-registration (bus -> cell) is episode-invariant, so the driver is
+        kept and only its episode state is cleared.
+        """
+        if self._driver is not None:
+            self._driver.reset()
+
     def update(self, update: Any):
         pass
 
